@@ -2,17 +2,15 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-import os
 import logging
 import numpy as np
 import torch
 import torch.nn as nn
-from torch.autograd import Variable
 import torch.nn.functional as F
-from encoder import encoder
-from decoder import decoder
+import encoder
+import decoder
 import time
-from utils import controller_batchify, controller_get_batch, pairwise_accuracy, hamming_distance, save_checkpoint
+from utils import controller_batchify, controller_get_batch, save_checkpoint
 
 SOS_ID=0
 EOS_ID=0

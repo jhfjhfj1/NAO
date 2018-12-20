@@ -7,11 +7,9 @@ import sys
 import argparse
 import numpy as np
 import tensorflow as tf
-from encoder import encoder
-from decoder import decoder
-import six
+import encoder
+import decoder
 import json
-import collections
 import math
 import time
 

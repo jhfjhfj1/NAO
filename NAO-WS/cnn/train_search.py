@@ -219,7 +219,8 @@ def train():
     # Output archs and evaluated error rate
     old_archs = child_params['arch_pool']
     old_archs_perf = [1 - i for i in valid_accuracy_list]
-    
+
+    # Old archs are sorted.
     old_archs_sorted_indices = np.argsort(old_archs_perf)
     old_archs = np.array(old_archs)[old_archs_sorted_indices].tolist()
     old_archs_perf = np.array(old_archs_perf)[old_archs_sorted_indices].tolist()
@@ -271,6 +272,7 @@ def train():
     new_archs = list(map(lambda x: utils.parse_seq_to_arch(x, branch_length), new_archs)) #[[[conv],[reduc]]]
     num_new_archs = len(new_archs)
     tf.logging.info("Generate {} new archs".format(num_new_archs))
+    # The pool size is always the same as the original seeds : 1000. Every time just replace the last ones.
     new_arch_pool = old_archs[:len(old_archs)-(num_new_archs+50)] + new_archs + utils.generate_arch(50, 5, 5)
     tf.logging.info("Totally {} archs now to train".format(len(new_arch_pool)))
     child_params['arch_pool'] = new_arch_pool

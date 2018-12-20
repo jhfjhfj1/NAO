@@ -2,11 +2,10 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-import os
 import numpy as np
 import tensorflow as tf
-from encoder import encoder
-from decoder import decoder
+import encoder
+import decoder
 import time
 
 SOS=0
@@ -94,7 +93,7 @@ def get_train_ops(encoder_train_input, encoder_train_target, decoder_train_input
     encoder_state = tf.contrib.rnn.LSTMStateTuple(encoder_state, encoder_state)
     encoder_state = (encoder_state,) * params['decoder_num_layers']
     my_decoder = decoder.Model(encoder_outputs, encoder_state, decoder_train_input, decoder_train_target, params,
-                                 tf.estimator.ModeKeys.TRAIN, 'Decoder', reuse)
+                               tf.estimator.ModeKeys.TRAIN, 'Decoder', reuse)
     encoder_loss = my_encoder.loss
     decoder_loss = my_decoder.loss
     mse = encoder_loss
