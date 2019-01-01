@@ -171,6 +171,7 @@ def relu(x, leaky=0.0):
 
 # Core part of the parameter sharing implementation.
 class Model(object):
+
     def __init__(self,
                  images,
                  labels,
@@ -208,12 +209,9 @@ class Model(object):
                  **kwargs
                  ):
         """
-    """
-
-        """
             Args:
               lr_dec_every: number of epochs to decay
-            """
+        """
         tf.logging.info("-" * 80)
         tf.logging.info("Build model {}".format(name))
 
@@ -348,6 +346,7 @@ class Model(object):
             assert num_epochs is not None, "Need num_epochs to drop_path"
 
         pool_distance = self.num_layers // 3
+        # The pool_layers is a list of 2 layer_ids indicating where to pool.
         self.pool_layers = [pool_distance, 2 * pool_distance + 1]
 
         if self.use_aux_heads:
@@ -540,6 +539,8 @@ class Model(object):
             layers = [x, x]
 
             # building layers in the micro space
+            # iterating blocks, some starts with a reduction cell and some starts without the reduction cell.
+            # But they all has some conv cells follows, which is build in the _enas_layer function.
             out_filters = self.out_filters
             for layer_id in range(self.num_layers + 2):
                 with tf.variable_scope("layer_{0}".format(layer_id)):
@@ -566,6 +567,7 @@ class Model(object):
                     layers = [layers[-1], x]
 
                 # auxiliary heads
+                # adding the average pooling and fully connected layers.
                 self.num_aux_vars = 0
                 if (self.use_aux_heads and
                         layer_id in self.aux_head_indices
@@ -798,7 +800,15 @@ class Model(object):
         return out
 
     def _enas_cell(self, x, curr_cell, prev_cell, op_id, out_filters):
-        """Performs an enas operation specified by op_id."""
+        """Performs an enas operation specified by op_id.
+
+        :param x:
+        :param curr_cell: int ID
+        :param prev_cell: int ID
+        :param op_id:
+        :param out_filters:
+        :return:
+        """
 
         num_possible_inputs = curr_cell + 1
 
@@ -905,17 +915,18 @@ class Model(object):
 
     def _enas_layer(self, layer_id, prev_layers, arc, out_filters):
         """
-    Args:
-      layer_id: current layer
-      prev_layers: cache of previous layers. for skip connections
-      start_idx: where to start looking at. technically, we can infer this
-        from layer_id, but why bother...
-    """
+        Args:
+            layer_id: current layer
+            prev_layers: cache of previous layers. for skip connections
+            start_idx: where to start looking at. technically, we can infer this
+                from layer_id, but why bother...
+        """
 
         assert len(prev_layers) == 2, "need exactly 2 inputs"
         layers = [prev_layers[0], prev_layers[1]]
         layers = self._maybe_calibrate_size(layers, out_filters, is_training=True)
         used = []
+        # Iterating through the n conv cells in a block
         for cell_id in range(self.num_cells):
             prev_layers = tf.stack(layers, axis=0)
             with tf.variable_scope("cell_{0}".format(cell_id)):
@@ -1033,6 +1044,7 @@ class Model(object):
         if self.x_valid is not None:
             tf.logging.info("-" * 80)
             tf.logging.info("Build valid graph")
+            # Let the validation data x_valid going through the neural network.
             logits = self._model(self.x_valid, False, reuse=tf.AUTO_REUSE)
             self.valid_preds = tf.argmax(logits, axis=1)
             self.valid_preds = tf.to_int32(self.valid_preds)
@@ -1202,6 +1214,8 @@ def get_valid_ops(images, labels, params):
         num_replicas=params['num_replicas'],
     )
     if params['fixed_arc'] is None:
+        # The arch_pool is a list of cell pairs, each cell is a list of mixed nodes and operations, every 4 elements
+        # is one node.
         arch_pool = tf.convert_to_tensor(params['arch_pool'], dtype=tf.int32)
         arch_pool = tf.data.Dataset.from_tensor_slices(arch_pool)
         arch_pool = arch_pool.map(lambda x: (x[0], x[1]))
@@ -1222,7 +1236,11 @@ def get_valid_ops(images, labels, params):
     return ops
 
 
+# The params is a dictionary contains a lot of information,
+# including the architectures to be validated.
+# validate means get the evaluation metric value (accuracy) on the validation set.
 def valid(params):
+    # defining a new computational graph
     g = tf.Graph()
     with g.as_default():
         images, labels = read_data(params['data_dir'])
@@ -1235,6 +1253,7 @@ def valid(params):
         with tf.train.SingularMonitoredSession(
                 config=config, checkpoint_dir=params['model_dir']) as sess:
             start_time = time.time()
+            # Looping over all the architectures
             for i in range(N):
                 run_ops = [
                     child_ops["valid_acc"],
@@ -1246,4 +1265,5 @@ def valid(params):
             log_string += " valid_acc={:<6.6f}".format(np.mean(valid_acc_list))
             log_string += " mins={:<10.2f}".format(float(curr_time - start_time) / 60)
             tf.logging.info(log_string)
+        print('valid_acc_list', valid_acc_list)
         return valid_acc_list

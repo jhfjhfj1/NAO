@@ -212,7 +212,7 @@ def train():
                     child_params['eval_every_epochs'] = e
                     break
 
-        child_epoch = child_train(child_params)
+        # child_epoch = child_train(child_params)
 
         # Evaluate seed archs
         valid_accuracy_list = child_valid(child_params)
