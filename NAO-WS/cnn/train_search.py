@@ -382,6 +382,15 @@ def main(unused_argv):
 
 
 if __name__ == '__main__':
+    import os
+
+    os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"  # see issue #152
+    os.environ["CUDA_VISIBLE_DEVICES"] = "3"
+
+    if tf.test.gpu_device_name():
+        print('Default GPU Device: {}'.format(tf.test.gpu_device_name()))
+    else:
+        print("Please install GPU version of TF")
     tf.logging.set_verbosity(tf.logging.INFO)
     FLAGS, unparsed = parser.parse_known_args()
     tf.app.run(argv=[sys.argv[0]] + unparsed)
