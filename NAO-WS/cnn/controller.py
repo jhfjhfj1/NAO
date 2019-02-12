@@ -12,20 +12,20 @@ SOS = 0
 EOS = 0
 
 
-def input_fn(encoder_input, encoder_target, decoder_target, mode, batch_size, num_epochs=1, symmetry=False):
+def input_fn(encoder_input, predictor_target, decoder_target, mode, batch_size, num_epochs=1, symmetry=False):
     shape = np.array(encoder_input).shape
     if mode == 'train':
-        tf.logging.info('Data size : {}, {}'.format(shape, np.array(encoder_target).shape))
+        tf.logging.info('Data size : {}, {}'.format(shape, np.array(predictor_target).shape))
         N = shape[0]
         source_length = shape[1]
         # converting numpy arrays to tf Dataset.
         encoder_input = tf.convert_to_tensor(encoder_input, dtype=tf.int32)
         encoder_input = tf.data.Dataset.from_tensor_slices(encoder_input)
-        encoder_target = tf.convert_to_tensor(encoder_target, dtype=tf.float32)
-        encoder_target = tf.data.Dataset.from_tensor_slices(encoder_target)
+        predictor_target = tf.convert_to_tensor(predictor_target, dtype=tf.float32)
+        predictor_target = tf.data.Dataset.from_tensor_slices(predictor_target)
         decoder_target = tf.convert_to_tensor(decoder_target, dtype=tf.int32)
         decoder_target = tf.data.Dataset.from_tensor_slices(decoder_target)
-        dataset = tf.data.Dataset.zip((encoder_input, encoder_target, decoder_target))
+        dataset = tf.data.Dataset.zip((encoder_input, predictor_target, decoder_target))
         dataset = dataset.shuffle(buffer_size=N)
 
         # Add one more element in the dataset, the decoder source.
@@ -66,14 +66,14 @@ def input_fn(encoder_input, encoder_target, decoder_target, mode, batch_size, nu
         dataset = dataset.batch(batch_size)
         dataset = dataset.prefetch(10)
         iterator = dataset.make_one_shot_iterator()
-        encoder_input, encoder_target, decoder_input, decoder_target = iterator.get_next()
+        encoder_input, predictor_target, decoder_input, decoder_target = iterator.get_next()
         assert encoder_input.shape.ndims == 2
-        assert encoder_target.shape.ndims == 1
-        while encoder_target.shape.ndims < 2:
-            encoder_target = tf.expand_dims(encoder_target, axis=-1)
+        assert predictor_target.shape.ndims == 1
+        while predictor_target.shape.ndims < 2:
+            predictor_target = tf.expand_dims(predictor_target, axis=-1)
         assert decoder_input.shape.ndims == 2
         assert decoder_target.shape.ndims == 2
-        return encoder_input, encoder_target, decoder_input, decoder_target
+        return encoder_input, predictor_target, decoder_input, decoder_target
     else:
         tf.logging.info('Data size : {}'.format(shape))
         encoder_input = tf.convert_to_tensor(encoder_input, dtype=tf.int32)
@@ -92,10 +92,10 @@ def input_fn(encoder_input, encoder_target, decoder_target, mode, batch_size, nu
         return encoder_input, decoder_input
 
 
-def get_train_ops(encoder_train_input, encoder_train_target, decoder_train_input, decoder_train_target, params,
+def get_train_ops(encoder_train_input, predictor_train_target, decoder_train_input, decoder_train_target, params,
                   reuse=tf.AUTO_REUSE):
     with tf.variable_scope('EPD', reuse=reuse):
-        my_encoder = encoder.Model(encoder_train_input, encoder_train_target, params, tf.estimator.ModeKeys.TRAIN,
+        my_encoder = encoder.Model(encoder_train_input, predictor_train_target, params, tf.estimator.ModeKeys.TRAIN,
                                    'Encoder', reuse)
         encoder_outputs = my_encoder.encoder_outputs
         encoder_state = my_encoder.arch_emb
@@ -161,6 +161,7 @@ def get_predict_ops(encoder_predict_input, decoder_predict_input, params, reuse=
         my_decoder = decoder.Model(encoder_outputs, encoder_state, decoder_predict_input, decoder_predict_target,
                                    params, tf.estimator.ModeKeys.PREDICT, 'Decoder', reuse)
         arch_emb, predict_value, new_arch_emb, new_arch_outputs = my_encoder.infer()
+        # the sample_id is not used by anything.
         sample_id = my_decoder.decode()
 
         encoder_state = new_arch_emb
@@ -176,15 +177,15 @@ def get_predict_ops(encoder_predict_input, decoder_predict_input, params, reuse=
 
 
 # encoder target is the list of performances of the architectures
-def train(params, encoder_input, encoder_target, decoder_target):
+def train(params, encoder_input, predictor_target, decoder_target):
     with tf.Graph().as_default():
         tf.logging.info('Training Encoder-Predictor-Decoder')
         tf.logging.info('Preparing data')
         shape = np.array(encoder_input).shape
         N = shape[0]
-        encoder_train_input, encoder_train_target, decoder_train_input, decoder_train_target = input_fn(
+        encoder_train_input, predictor_train_target, decoder_train_input, decoder_train_target = input_fn(
             encoder_input,
-            encoder_target,
+            predictor_target,
             decoder_target,
             'train',
             params['batch_size'],
@@ -193,7 +194,7 @@ def train(params, encoder_input, encoder_target, decoder_target):
         )
         tf.logging.info('Building model')
         train_mse, train_cross_entropy, train_loss, learning_rate, train_op, global_step, grad_norm = get_train_ops(
-            encoder_train_input, encoder_train_target, decoder_train_input, decoder_train_target, params)
+            encoder_train_input, predictor_train_target, decoder_train_input, decoder_train_target, params)
         saver = tf.train.Saver(max_to_keep=10)
         checkpoint_saver_hook = tf.train.CheckpointSaverHook(
             params['model_dir'], save_steps=params['batches_per_epoch'] * params['save_frequency'], saver=saver)

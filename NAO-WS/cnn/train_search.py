@@ -212,14 +212,14 @@ def train():
                     child_params['eval_every_epochs'] = e
                     break
 
-        # child_epoch = child_train(child_params)
+        child_epoch = child_train(child_params)
 
         # Evaluate seed archs
         valid_accuracy_list = child_valid(child_params)
 
         # Output archs and evaluated error rate
         old_archs = child_params['arch_pool']
-        old_archs_perf = [1 - i for i in valid_accuracy_list]
+        old_archs_perf = [(1 - acc) for acc in valid_accuracy_list]
 
         # Old archs are sorted.
         old_archs_sorted_indices = np.argsort(old_archs_perf)
@@ -245,11 +245,11 @@ def train():
         # [[conv, reduc]]
         min_val = min(old_archs_perf)
         max_val = max(old_archs_perf)
-        encoder_target = [(i - min_val) / (max_val - min_val) for i in old_archs_perf]
+        predictor_target = [(i - min_val) / (max_val - min_val) for i in old_archs_perf]
         decoder_target = copy.copy(encoder_input)
         controller_params['batches_per_epoch'] = math.ceil(len(encoder_input) / controller_params['batch_size'])
         # if clean controller model
-        controller.train(controller_params, encoder_input, encoder_target, decoder_target)
+        controller.train(controller_params, encoder_input, predictor_target, decoder_target)
 
         # Generate new archs
         # old_archs = old_archs[:450]
@@ -385,7 +385,7 @@ if __name__ == '__main__':
     import os
 
     os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"  # see issue #152
-    os.environ["CUDA_VISIBLE_DEVICES"] = "3"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "2"
 
     if tf.test.gpu_device_name():
         print('Default GPU Device: {}'.format(tf.test.gpu_device_name()))
