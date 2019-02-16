@@ -66,29 +66,22 @@ class Encoder(object):
 
         self.arch_emb = x
 
-        for i in range(self.mlp_num_layers):
-            name = 'mlp_{}'.format(i)
-            x = tf.layers.dense(x, self.mlp_hidden_size, activation=tf.nn.relu, name=name)
-            x = tf.layers.dropout(x, self.mlp_dropout)
-            '''
-      x = tf.layers.batch_normalization(
+        '''
+        x = tf.layers.batch_normalization(
         x, axis=1,
         momentum=_BATCH_NORM_DECAY, epsilon=_BATCH_NORM_EPSILON,
         center=True, scale=True, training=is_training, fused=True
         )'''
-        self.predict_value = tf.layers.dense(x, 1, activation=tf.sigmoid, name='regression')
         return {
             'arch_emb': self.arch_emb,
-            'predict_value': self.predict_value,
             'encoder_outputs': self.encoder_outputs,
             'encoder_state': self.encoder_state,
         }
 
 
 class Model(object):
-    def __init__(self, x, y, params, mode, scope='Encoder', reuse=tf.AUTO_REUSE):
+    def __init__(self, x, params, mode, scope='Encoder', reuse=tf.AUTO_REUSE):
         self.x = x
-        self.y = y
         self.params = params
         self.batch_size = tf.shape(x)[0]
         self.vocab_size = params['encoder_vocab_size']
@@ -113,7 +106,7 @@ class Model(object):
         # Encoder
         with tf.variable_scope(scope, reuse=reuse):
             self.W_emb = tf.get_variable('W_emb', [self.vocab_size, self.emb_size])
-            self.arch_emb, self.predict_value, self.encoder_outputs, self.encoder_state = self.build_encoder()
+            self.arch_emb, self.encoder_outputs, self.encoder_state = self.build_encoder()
             if self.mode != tf.estimator.ModeKeys.PREDICT:
                 self.compute_loss()
             else:
@@ -123,19 +116,10 @@ class Model(object):
     def build_encoder(self):
         encoder = Encoder(self.params, self.mode, self.W_emb)
         res = encoder.build_encoder(self.x, self.batch_size, self.is_training)
-        return res['arch_emb'], res['predict_value'], res['encoder_outputs'], res['encoder_state']
+        return res['arch_emb'], res['encoder_outputs'], res['encoder_state']
 
     def compute_loss(self):
-        weights = 1 - tf.cast(tf.equal(self.y, -1.0), tf.float32)
-        mean_squared_error = tf.losses.mean_squared_error(
-            labels=self.y,
-            predictions=self.predict_value,
-            weights=weights)
-        tf.identity(mean_squared_error, name='squared_error')
-        tf.summary.scalar('mean_squared_error', mean_squared_error)
-        # Add weight decay to the loss.
-        self.loss = mean_squared_error
-        total_loss = mean_squared_error + self.weight_decay * tf.add_n(
+        total_loss = self.weight_decay * tf.add_n(
             [tf.nn.l2_loss(v) for v in tf.trainable_variables()])
         self.total_loss = total_loss
 
