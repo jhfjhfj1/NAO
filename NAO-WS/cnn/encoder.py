@@ -10,7 +10,9 @@ _BATCH_NORM_EPSILON = 1e-5
 
 
 class Predictor:
-    def __init__(self, params):
+    def __init__(self, embedding, target, params, mode):
+        self.embedding = embedding
+        self.target = target
         self.emb_size = params['encoder_emb_size']
         self.mlp_num_layers = params['mlp_num_layers']
         self.mlp_hidden_size = params['mlp_hidden_size']
@@ -18,16 +20,44 @@ class Predictor:
         self.dropout = params['encoder_dropout']
         self.output = None
         self.loss = None
+        self.params = params
+        self.weight_decay = params['weight_decay']
+        self.mode = mode
+        self.time_major = params['time_major']
 
     def build(self, x):
         for i in range(self.mlp_num_layers):
             name = 'mlp_{}'.format(i)
             x = tf.layers.dense(x, self.mlp_hidden_size, activation=tf.nn.relu, name=name)
             x = tf.layers.dropout(x, self.mlp_dropout)
-        self.output = tf.layers.dense(x, 1, activation=tf.sigmoid, name='regression')
+        self.prediction = tf.layers.dense(x, 1, activation=tf.sigmoid, name='regression')
 
     def compute_loss(self, target):
-        pass
+        weights = 1 - tf.cast(tf.equal(self.target, -1.0), tf.float32)
+        mean_squared_error = tf.losses.mean_squared_error(
+            labels=self.target,
+            predictions=self.prediction,
+            weights=weights)
+        tf.identity(mean_squared_error, name='squared_error')
+        tf.summary.scalar('mean_squared_error', mean_squared_error)
+        # Add weight decay to the loss.
+        self.loss = mean_squared_error
+        total_loss = mean_squared_error + self.weight_decay * tf.add_n(
+            [tf.nn.l2_loss(v) for v in tf.trainable_variables()])
+        self.total_loss = total_loss
+
+    def infer(self):
+        assert self.mode == tf.estimator.ModeKeys.PREDICT
+        grads_on_outputs = tf.gradients(self.prediction, self.embedding)[0]
+        # lambdas = tf.expand_dims(tf.expand_dims(lambdas, axis=-1), axis=-1)
+        new_arch_outputs = self.embedding - self.params['predict_lambda'] * grads_on_outputs
+        new_arch_outputs = tf.nn.l2_normalize(new_arch_outputs, dim=-1)
+        if self.time_major:
+            new_arch_emb = tf.reduce_mean(new_arch_outputs, axis=0)
+        else:
+            new_arch_emb = tf.reduce_mean(new_arch_outputs, axis=1)
+        new_arch_emb = tf.nn.l2_normalize(new_arch_emb, dim=-1)
+        return self.prediction, new_arch_emb, new_arch_outputs
 
 
 class Encoder(object):
@@ -189,15 +219,3 @@ class Encoder(object):
             'loss': self.total_loss,
         }
 
-    def infer(self):
-        assert self.mode == tf.estimator.ModeKeys.PREDICT
-        grads_on_outputs = tf.gradients(self.predict_value, self.encoder_outputs)[0]
-        # lambdas = tf.expand_dims(tf.expand_dims(lambdas, axis=-1), axis=-1)
-        new_arch_outputs = self.encoder_outputs - self.params['predict_lambda'] * grads_on_outputs
-        new_arch_outputs = tf.nn.l2_normalize(new_arch_outputs, dim=-1)
-        if self.time_major:
-            new_arch_emb = tf.reduce_mean(new_arch_outputs, axis=0)
-        else:
-            new_arch_emb = tf.reduce_mean(new_arch_outputs, axis=1)
-        new_arch_emb = tf.nn.l2_normalize(new_arch_emb, dim=-1)
-        return self.arch_emb, self.predict_value, new_arch_emb, new_arch_outputs
