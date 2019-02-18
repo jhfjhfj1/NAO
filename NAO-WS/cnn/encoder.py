@@ -219,3 +219,8 @@ class Encoder(object):
             'loss': self.total_loss,
         }
 
+    def predict(self):
+        assert self.mode == tf.estimator.ModeKeys.PREDICT
+        # lambdas = tf.expand_dims(tf.expand_dims(lambdas, axis=-1), axis=-1)
+        return self.arch_emb, self.encoder_outputs
+

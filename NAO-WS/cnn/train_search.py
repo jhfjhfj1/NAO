@@ -246,10 +246,9 @@ def train():
         min_val = min(old_archs_perf)
         max_val = max(old_archs_perf)
         predictor_target = [(i - min_val) / (max_val - min_val) for i in old_archs_perf]
-        decoder_target = copy.copy(encoder_input)
         controller_params['batches_per_epoch'] = math.ceil(len(encoder_input) / controller_params['batch_size'])
         # if clean controller model
-        controller.train(controller_params, encoder_input, predictor_target, decoder_target)
+        controller.train(controller_params, encoder_input, predictor_target)
 
         # Generate new archs
         # old_archs = old_archs[:450]

@@ -98,8 +98,7 @@ def input_fn(encoder_input, decoder_target, mode, batch_size, num_epochs=1, symm
 def get_train_ops(encoder_train_input, decoder_train_input, decoder_train_target, params,
                   reuse=tf.AUTO_REUSE):
     with tf.variable_scope('EPD', reuse=reuse):
-        my_encoder = encoder.Model(encoder_train_input, params, tf.estimator.ModeKeys.TRAIN,
-                                   'Encoder', reuse)
+        my_encoder = encoder.Encoder(encoder_train_input, params, tf.estimator.ModeKeys.TRAIN, 'Encoder', reuse)
         encoder_outputs = my_encoder.encoder_outputs
         encoder_state = my_encoder.arch_emb
         encoder_state.set_shape([None, params['decoder_hidden_size']])
@@ -148,33 +147,13 @@ def get_train_ops(encoder_train_input, decoder_train_input, decoder_train_target
         return cross_entropy, total_loss, learning_rate, train_op, global_step, grad_norm
 
 
-def get_predict_ops(encoder_predict_input, decoder_predict_input, params, reuse=tf.AUTO_REUSE):
-    encoder_predict_target = None
-    decoder_predict_target = None
+def get_predict_ops(encoder_predict_input, params, reuse=tf.AUTO_REUSE):
     with tf.variable_scope('EPD', reuse=reuse):
-        my_encoder = encoder.Model(encoder_predict_input, encoder_predict_target, params, tf.estimator.ModeKeys.PREDICT,
-                                   'Encoder', reuse)
-        encoder_outputs = my_encoder.encoder_outputs
-        encoder_state = my_encoder.arch_emb
-        encoder_state.set_shape([None, params['decoder_hidden_size']])
-        encoder_state = tf.contrib.rnn.LSTMStateTuple(encoder_state, encoder_state)
-        encoder_state = (encoder_state,) * params['decoder_num_layers']
-        my_decoder = decoder.Model(encoder_outputs, encoder_state, decoder_predict_input, decoder_predict_target,
-                                   params, tf.estimator.ModeKeys.PREDICT, 'Decoder', reuse)
-        arch_emb, predict_value, new_arch_emb, new_arch_outputs = my_encoder.infer()
+        my_encoder = encoder.Encoder(encoder_predict_input, params, tf.estimator.ModeKeys.PREDICT, 'Encoder', reuse)
+        arch_emb = my_encoder.predict()
         # the sample_id is not used by anything.
-        sample_id = my_decoder.decode()
 
-        encoder_state = new_arch_emb
-        encoder_state.set_shape([None, params['decoder_hidden_size']])
-        encoder_state = tf.contrib.rnn.LSTMStateTuple(encoder_state, encoder_state)
-        encoder_state = (encoder_state,) * params['decoder_num_layers']
-        tf.get_variable_scope().reuse_variables()
-        my_decoder = decoder.Model(new_arch_outputs, encoder_state, decoder_predict_input, decoder_predict_target,
-                                   params, tf.estimator.ModeKeys.PREDICT, 'Decoder')
-        new_sample_id = my_decoder.decode()
-
-        return predict_value, sample_id, new_sample_id
+        return arch_emb
 
 
 # encoder target is the list of performances of the architectures
@@ -191,21 +170,22 @@ def train(params, encoder_input):
             'train',
             params['batch_size'],
             None,
-            params['symmetry'],
+            params['symmetry']
         )
         tf.logging.info('Building model')
         train_cross_entropy, train_loss, learning_rate, train_op, global_step, grad_norm = get_train_ops(
             encoder_train_input, decoder_train_input, decoder_train_target, params)
         saver = tf.train.Saver(max_to_keep=10)
         checkpoint_saver_hook = tf.train.CheckpointSaverHook(
-            params['model_dir'], save_steps=params['batches_per_epoch'] * params['save_frequency'], saver=saver)
+            params['autoencoder_model_dir'], save_steps=params['batches_per_epoch'] * params['save_frequency'],
+            saver=saver)
         hooks = [checkpoint_saver_hook]
         merged_summary = tf.summary.merge_all()
         tf.logging.info('Starting Session')
         config = tf.ConfigProto(allow_soft_placement=True)
         with tf.train.SingularMonitoredSession(
-                config=config, hooks=hooks, checkpoint_dir=params['model_dir']) as sess:
-            writer = tf.summary.FileWriter(params['model_dir'], sess.graph)
+                config=config, hooks=hooks, checkpoint_dir=params['autoencoder_model_dir']) as sess:
+            writer = tf.summary.FileWriter(params['autoencoder_model_dir'], sess.graph)
             start_time = time.time()
             for step in range(params['train_epochs'] * params['batches_per_epoch']):
                 run_ops = [
@@ -236,7 +216,7 @@ def train(params, encoder_input):
                     tf.logging.info(log_string)
 
 
-def predict(params, encoder_input):
+def encode(params, encoder_input):
     with tf.Graph().as_default():
         tf.logging.info(
             'Generating new architectures using gradient descent with step size {}'.format(params['predict_lambda']))
@@ -250,21 +230,50 @@ def predict(params, encoder_input):
             1,
             False,
         )
-        predict_value, sample_id, new_sample_id = get_predict_ops(encoder_input, decoder_input, params)
+        embed = get_predict_ops(encoder_input, params)
         tf.logging.info('Starting Session')
         config = tf.ConfigProto(allow_soft_placement=True)
-        new_sample_id_list = []
+        arch_embed, encoder_outputs = None, None
         with tf.train.SingularMonitoredSession(
-                config=config, checkpoint_dir=params['model_dir']) as sess:
+                config=config, checkpoint_dir=params['autoencoder_model_dir']) as sess:
             for _ in range(N // params['batch_size']):
-                new_sample_id_v = sess.run(new_sample_id)
-                new_sample_id_list.extend(new_sample_id_v.tolist())
-        return new_sample_id_list
+                arch_embed, encoder_outputs = sess.run(embed)
+        return arch_embed, encoder_outputs
+
+
+def decode(params, new_arch_outputs):
+    new_arch_outputs = tf.nn.l2_normalize(new_arch_outputs, dim=-1)
+    if params['time_major']:
+        new_arch_emb = tf.reduce_mean(new_arch_outputs, axis=0)
+    else:
+        new_arch_emb = tf.reduce_mean(new_arch_outputs, axis=1)
+    new_arch_emb = tf.nn.l2_normalize(new_arch_emb, dim=-1)
+
+    encoder_state = new_arch_emb
+    encoder_state.set_shape([None, params['decoder_hidden_size']])
+    encoder_state = tf.contrib.rnn.LSTMStateTuple(encoder_state, encoder_state)
+    encoder_state = (encoder_state,) * params['decoder_num_layers']
+    tf.get_variable_scope().reuse_variables()
+
+    my_decoder = decoder.Model(new_arch_outputs, encoder_state, None, None,
+                               params, tf.estimator.ModeKeys.PREDICT, 'Decoder')
+    new_sample_id = my_decoder.decode()
+
+    tf.logging.info('Starting Session')
+    config = tf.ConfigProto(allow_soft_placement=True)
+    new_sample_id_list = []
+    with tf.train.SingularMonitoredSession(
+            config=config, checkpoint_dir=params['model_dir']) as sess:
+        for _ in range(N // params['batch_size']):
+            new_sample_id_v = sess.run(new_sample_id)
+            new_sample_id_list.extend(new_sample_id_v.tolist())
+    return new_sample_id_list
 
 
 def get_controller_params():
     params = {
         'model_dir': os.path.join(FLAGS.output_dir, 'controller'),
+        'autoencoder_model_dir': os.path.join(FLAGS.output_dir, 'autoencoder'),
         'num_seed_arch': FLAGS.controller_num_seed_arch,
         'encoder_num_layers': FLAGS.controller_encoder_num_layers,
         'encoder_hidden_size': FLAGS.controller_encoder_hidden_size,
@@ -309,7 +318,9 @@ def main(unused_argv):
         json.dump(all_params, f)
     arch_pool = utils.generate_arch(100000, 5, 5)
     branch_length = 40 // 2 // 5 // 2
-    encoder_input = list(map(lambda x: utils.parse_arch_to_seq(x[0], branch_length) + utils.parse_arch_to_seq(x[1], branch_length), arch_pool))
+    encoder_input = list(
+        map(lambda x: utils.parse_arch_to_seq(x[0], branch_length) + utils.parse_arch_to_seq(x[1], branch_length),
+            arch_pool))
     controller_params = get_controller_params()
     controller_params['batches_per_epoch'] = math.ceil(len(encoder_input) / controller_params['batch_size'])
     train(controller_params, encoder_input)
