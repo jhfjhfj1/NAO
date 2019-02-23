@@ -10,8 +10,8 @@ _BATCH_NORM_EPSILON = 1e-5
 
 
 class Predictor:
-    def __init__(self, embedding, target, params, mode):
-        self.embedding = embedding
+    def __init__(self, encoder_outputs, target, params, mode):
+        self.encoder_outputs = encoder_outputs
         self.target = target
         self.emb_size = params['encoder_emb_size']
         self.mlp_num_layers = params['mlp_num_layers']
@@ -24,15 +24,26 @@ class Predictor:
         self.weight_decay = params['weight_decay']
         self.mode = mode
         self.time_major = params['time_major']
+        self.prediction = None
+        self.arch_emb = None
 
-    def build(self, x):
+    def build(self):
+        x = self.encoder_outputs
+        if self.time_major:
+            x = tf.transpose(x, [1, 0, 2])
+        if self.time_major:
+            x = tf.reduce_mean(x, axis=0)
+        else:
+            x = tf.reduce_mean(x, axis=1)
+        x = tf.nn.l2_normalize(x, dim=-1)
+        self.arch_emb = x
         for i in range(self.mlp_num_layers):
             name = 'mlp_{}'.format(i)
             x = tf.layers.dense(x, self.mlp_hidden_size, activation=tf.nn.relu, name=name)
             x = tf.layers.dropout(x, self.mlp_dropout)
         self.prediction = tf.layers.dense(x, 1, activation=tf.sigmoid, name='regression')
 
-    def compute_loss(self, target):
+    def compute_loss(self):
         weights = 1 - tf.cast(tf.equal(self.target, -1.0), tf.float32)
         mean_squared_error = tf.losses.mean_squared_error(
             labels=self.target,
@@ -48,9 +59,9 @@ class Predictor:
 
     def infer(self):
         assert self.mode == tf.estimator.ModeKeys.PREDICT
-        grads_on_outputs = tf.gradients(self.prediction, self.embedding)[0]
+        grads_on_outputs = tf.gradients(self.prediction, self.encoder_outputs)[0]
         # lambdas = tf.expand_dims(tf.expand_dims(lambdas, axis=-1), axis=-1)
-        new_arch_outputs = self.embedding - self.params['predict_lambda'] * grads_on_outputs
+        new_arch_outputs = self.encoder_outputs - self.params['predict_lambda'] * grads_on_outputs
         new_arch_outputs = tf.nn.l2_normalize(new_arch_outputs, dim=-1)
         if self.time_major:
             new_arch_emb = tf.reduce_mean(new_arch_outputs, axis=0)
@@ -81,8 +92,6 @@ class Encoder(object):
         initializer = tf.random_uniform_initializer(-0.1, 0.1)
         tf.get_variable_scope().set_initializer(initializer)
         self.build_graph(scope=scope, reuse=reuse)
-
-
 
     def build_graph(self, scope=None, reuse=tf.AUTO_REUSE):
         tf.logging.info("# creating %s graph ..." % self.mode)

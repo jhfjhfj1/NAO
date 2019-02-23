@@ -21,78 +21,62 @@ SOS = 0
 EOS = 0
 
 
+# Add one more element in the dataset, the decoder source.
+# decoder_src is the input to the lstm decoder, which uses the output of the last step.
+# Since the first step doesn't have a last step output, we use SOS (start of sequence) = 0 as the input.
+def preprocess(encoder_src, decoder_tgt):  # src:sequence tgt:performance
+    sos_id = tf.constant([SOS])
+    decoder_src = tf.concat([sos_id, decoder_tgt[:-1]], axis=0)
+    return encoder_src, decoder_src, decoder_tgt
+
+
 def input_fn(encoder_input, decoder_target, mode, batch_size, num_epochs=1, symmetry=False):
     shape = np.array(encoder_input).shape
-    if mode == 'train':
-        N = shape[0]
-        source_length = shape[1]
-        # converting numpy arrays to tf Dataset.
-        encoder_input = tf.convert_to_tensor(encoder_input, dtype=tf.int32)
-        encoder_input = tf.data.Dataset.from_tensor_slices(encoder_input)
-        decoder_target = tf.convert_to_tensor(decoder_target, dtype=tf.int32)
-        decoder_target = tf.data.Dataset.from_tensor_slices(decoder_target)
-        dataset = tf.data.Dataset.zip((encoder_input, decoder_target))
-        dataset = dataset.shuffle(buffer_size=N)
+    N = shape[0]
+    source_length = shape[1]
+    # converting numpy arrays to tf Dataset.
+    encoder_input = tf.convert_to_tensor(encoder_input, dtype=tf.int32)
+    encoder_input = tf.data.Dataset.from_tensor_slices(encoder_input)
+    decoder_target = tf.convert_to_tensor(decoder_target, dtype=tf.int32)
+    decoder_target = tf.data.Dataset.from_tensor_slices(decoder_target)
+    dataset = tf.data.Dataset.zip((encoder_input, decoder_target))
+    dataset = dataset.shuffle(buffer_size=N)
 
-        # Add one more element in the dataset, the decoder source.
-        # decoder_src is the input to the lstm decoder, which uses the output of the last step.
-        # Since the first step doesn't have a last step output, we use SOS (start of sequence) = 0 as the input.
-        def preprocess(encoder_src, decoder_tgt):  # src:sequence tgt:performance
-            sos_id = tf.constant([SOS])
-            decoder_src = tf.concat([sos_id, decoder_tgt[:-1]], axis=0)
-            return encoder_src, decoder_src, decoder_tgt
+    def generate_symmetry(encoder_src, decoder_src, decoder_tgt):
+        a = tf.random_uniform([], 0, 5, dtype=tf.int32)
+        b = tf.random_uniform([], 0, 5, dtype=tf.int32)
+        cell_seq_length = source_length // 2
+        assert source_length in [40, 60]
+        if source_length == 40:
+            encoder_src = tf.concat(
+                [encoder_src[:4 * a], encoder_src[4 * a + 2:4 * a + 4], encoder_src[4 * a:4 * a + 2],
+                 encoder_src[4 * (a + 1):cell_seq_length + 4 * b],
+                 encoder_src[cell_seq_length + 4 * b + 2:cell_seq_length + 4 * b + 4],
+                 encoder_src[cell_seq_length + 4 * b:cell_seq_length + 4 * b + 2],
+                 encoder_src[cell_seq_length + 4 * (b + 1):]], axis=0)
 
-        def generate_symmetry(encoder_src, decoder_src, decoder_tgt):
-            a = tf.random_uniform([], 0, 5, dtype=tf.int32)
-            b = tf.random_uniform([], 0, 5, dtype=tf.int32)
-            cell_seq_length = source_length // 2
-            assert source_length in [40, 60]
-            if source_length == 40:
-                encoder_src = tf.concat(
-                    [encoder_src[:4 * a], encoder_src[4 * a + 2:4 * a + 4], encoder_src[4 * a:4 * a + 2],
-                     encoder_src[4 * (a + 1):cell_seq_length + 4 * b],
-                     encoder_src[cell_seq_length + 4 * b + 2:cell_seq_length + 4 * b + 4],
-                     encoder_src[cell_seq_length + 4 * b:cell_seq_length + 4 * b + 2],
-                     encoder_src[cell_seq_length + 4 * (b + 1):]], axis=0)
+        else:  # source_length=60
+            encoder_src = tf.concat(
+                [encoder_src[:6 * a], encoder_src[6 * a + 3:6 * a + 6], encoder_src[6 * a:6 * a + 3],
+                 encoder_src[6 * (a + 1):cell_seq_length + 6 * b],
+                 encoder_src[cell_seq_length + 6 * b + 3:cell_seq_length + 6 * b + 6],
+                 encoder_src[cell_seq_length + 6 * b:cell_seq_length + 6 * b + 3],
+                 encoder_src[cell_seq_length + 6 * (b + 1):]], axis=0)
+        decoder_tgt = encoder_src
+        return encoder_src, decoder_src, decoder_tgt
 
-            else:  # source_length=60
-                encoder_src = tf.concat(
-                    [encoder_src[:6 * a], encoder_src[6 * a + 3:6 * a + 6], encoder_src[6 * a:6 * a + 3],
-                     encoder_src[6 * (a + 1):cell_seq_length + 6 * b],
-                     encoder_src[cell_seq_length + 6 * b + 3:cell_seq_length + 6 * b + 6],
-                     encoder_src[cell_seq_length + 6 * b:cell_seq_length + 6 * b + 3],
-                     encoder_src[cell_seq_length + 6 * (b + 1):]], axis=0)
-            decoder_tgt = encoder_src
-            return encoder_src, decoder_src, decoder_tgt
-
-        dataset = dataset.map(preprocess)
-        if symmetry:
-            dataset = dataset.map(generate_symmetry)
-        dataset = dataset.repeat(num_epochs)
-        dataset = dataset.batch(batch_size)
-        dataset = dataset.prefetch(10)
-        iterator = dataset.make_one_shot_iterator()
-        encoder_input, decoder_input, decoder_target = iterator.get_next()
-        assert encoder_input.shape.ndims == 2
-        assert decoder_input.shape.ndims == 2
-        assert decoder_target.shape.ndims == 2
-        return encoder_input, decoder_input, decoder_target
-    else:
-        tf.logging.info('Data size : {}'.format(shape))
-        encoder_input = tf.convert_to_tensor(encoder_input, dtype=tf.int32)
-        encoder_input = tf.data.Dataset.from_tensor_slices(encoder_input)
-
-        def preprocess(encoder_src):
-            return encoder_src, tf.constant([SOS], dtype=tf.int32)
-
-        dataset = encoder_input.map(preprocess)
-        dataset = dataset.repeat(num_epochs)
-        dataset = dataset.batch(batch_size)
-        dataset = dataset.prefetch(10)
-        iterator = dataset.make_one_shot_iterator()
-        encoder_input, decoder_input = iterator.get_next()
-        assert encoder_input.shape.ndims == 2
-        return encoder_input, decoder_input
+    dataset = dataset.map(preprocess)
+    if symmetry:
+        dataset = dataset.map(generate_symmetry)
+    dataset = dataset.repeat(num_epochs)
+    dataset = dataset.batch(batch_size)
+    dataset = dataset.prefetch(10)
+    iterator = dataset.make_one_shot_iterator()
+    encoder_input, decoder_input, decoder_target = iterator.get_next()
+    assert encoder_input.shape.ndims == 2
+    assert decoder_input.shape.ndims == 2
+    assert decoder_target.shape.ndims == 2
+    return encoder_input, decoder_input, decoder_target
 
 
 def get_train_ops(encoder_train_input, decoder_train_input, decoder_train_target, params,
@@ -145,15 +129,6 @@ def get_train_ops(encoder_train_input, decoder_train_input, decoder_train_target
                 zip(clipped_gradients, variables), global_step=global_step)
 
         return cross_entropy, total_loss, learning_rate, train_op, global_step, grad_norm
-
-
-def get_predict_ops(encoder_predict_input, params, reuse=tf.AUTO_REUSE):
-    with tf.variable_scope('EPD', reuse=reuse):
-        my_encoder = encoder.Encoder(encoder_predict_input, params, tf.estimator.ModeKeys.PREDICT, 'Encoder', reuse)
-        arch_emb = my_encoder.predict()
-        # the sample_id is not used by anything.
-
-        return arch_emb
 
 
 # encoder target is the list of performances of the architectures
@@ -214,60 +189,6 @@ def train(params, encoder_input):
                     log_string += "|gn|={:<8.4f} ".format(gn_v)
                     log_string += "mins={:<10.2f}".format((curr_time - start_time) / 60)
                     tf.logging.info(log_string)
-
-
-def encode(params, encoder_input):
-    with tf.Graph().as_default():
-        tf.logging.info(
-            'Generating new architectures using gradient descent with step size {}'.format(params['predict_lambda']))
-        tf.logging.info('Preparing data')
-        N = len(encoder_input)
-        encoder_input, decoder_input = input_fn(
-            encoder_input,
-            None,
-            'test',
-            params['batch_size'],
-            1,
-            False,
-        )
-        embed = get_predict_ops(encoder_input, params)
-        tf.logging.info('Starting Session')
-        config = tf.ConfigProto(allow_soft_placement=True)
-        arch_embed, encoder_outputs = None, None
-        with tf.train.SingularMonitoredSession(
-                config=config, checkpoint_dir=params['autoencoder_model_dir']) as sess:
-            for _ in range(N // params['batch_size']):
-                arch_embed, encoder_outputs = sess.run(embed)
-        return arch_embed, encoder_outputs
-
-
-def decode(params, new_arch_outputs):
-    new_arch_outputs = tf.nn.l2_normalize(new_arch_outputs, dim=-1)
-    if params['time_major']:
-        new_arch_emb = tf.reduce_mean(new_arch_outputs, axis=0)
-    else:
-        new_arch_emb = tf.reduce_mean(new_arch_outputs, axis=1)
-    new_arch_emb = tf.nn.l2_normalize(new_arch_emb, dim=-1)
-
-    encoder_state = new_arch_emb
-    encoder_state.set_shape([None, params['decoder_hidden_size']])
-    encoder_state = tf.contrib.rnn.LSTMStateTuple(encoder_state, encoder_state)
-    encoder_state = (encoder_state,) * params['decoder_num_layers']
-    tf.get_variable_scope().reuse_variables()
-
-    my_decoder = decoder.Model(new_arch_outputs, encoder_state, None, None,
-                               params, tf.estimator.ModeKeys.PREDICT, 'Decoder')
-    new_sample_id = my_decoder.decode()
-
-    tf.logging.info('Starting Session')
-    config = tf.ConfigProto(allow_soft_placement=True)
-    new_sample_id_list = []
-    with tf.train.SingularMonitoredSession(
-            config=config, checkpoint_dir=params['model_dir']) as sess:
-        for _ in range(N // params['batch_size']):
-            new_sample_id_v = sess.run(new_sample_id)
-            new_sample_id_list.extend(new_sample_id_v.tolist())
-    return new_sample_id_list
 
 
 def get_controller_params():

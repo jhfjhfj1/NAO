@@ -34,6 +34,8 @@ def read_data(data_path, num_valids=5000, dataset='CIFAR10'):
         images["valid"] = (images["valid"] - mean) / std
     images["test"] = (images["test"] - mean) / std
 
+    return images, labels
+
 
 def mnist():
     mnist = tf.keras.datasets.mnist

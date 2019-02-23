@@ -212,7 +212,7 @@ def train():
                     child_params['eval_every_epochs'] = e
                     break
 
-        child_epoch = child_train(child_params)
+        # child_epoch = child_train(child_params)
 
         # Evaluate seed archs
         valid_accuracy_list = child_valid(child_params)
@@ -334,6 +334,7 @@ def get_child_model_params():
 def get_controller_params():
     params = {
         'model_dir': os.path.join(FLAGS.output_dir, 'controller'),
+        'autoencoder_model_dir': os.path.join(FLAGS.output_dir, 'autoencoder'),
         'num_seed_arch': FLAGS.controller_num_seed_arch,
         'encoder_num_layers': FLAGS.controller_encoder_num_layers,
         'encoder_hidden_size': FLAGS.controller_encoder_hidden_size,
