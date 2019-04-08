@@ -54,34 +54,41 @@ def encode(params, original_encoder_input):
 
 
 def decode(params, decoder_inputs, new_arch_outputs):
-    if params['time_major']:
-        new_arch_outputs = tf.transpose(new_arch_outputs, [1, 0, 2])
-    new_arch_outputs = tf.nn.l2_normalize(new_arch_outputs, dim=-1)
-    if params['time_major']:
-        new_arch_emb = tf.reduce_mean(new_arch_outputs, axis=0)
-    else:
-        new_arch_emb = tf.reduce_mean(new_arch_outputs, axis=1)
-    new_arch_emb = tf.nn.l2_normalize(new_arch_emb, dim=-1)
+    with tf.Graph().as_default():
+        tf.logging.info(
+            'Generating new architectures using gradient descent with step size {}'.format(params['predict_lambda']))
+        tf.logging.info('Preparing data')
+        n = new_arch_outputs.shape[0]
+        decoder_inputs = tf.constant([SOS] * n, dtype=tf.int32)
+        new_arch_outputs = tf.convert_to_tensor(new_arch_outputs, dtype=tf.float32)
+        if params['time_major']:
+            new_arch_outputs = tf.transpose(new_arch_outputs, [1, 0, 2])
+        new_arch_outputs = tf.nn.l2_normalize(new_arch_outputs, dim=-1)
+        if params['time_major']:
+            new_arch_emb = tf.reduce_mean(new_arch_outputs, axis=0)
+        else:
+            new_arch_emb = tf.reduce_mean(new_arch_outputs, axis=1)
+        new_arch_emb = tf.nn.l2_normalize(new_arch_emb, dim=-1)
 
-    encoder_state = new_arch_emb
-    encoder_state.set_shape([None, params['decoder_hidden_size']])
-    encoder_state = tf.contrib.rnn.LSTMStateTuple(encoder_state, encoder_state)
-    encoder_state = (encoder_state,) * params['decoder_num_layers']
-    tf.get_variable_scope().reuse_variables()
+        encoder_state = new_arch_emb
+        encoder_state.set_shape([None, params['decoder_hidden_size']])
+        encoder_state = tf.contrib.rnn.LSTMStateTuple(encoder_state, encoder_state)
+        encoder_state = (encoder_state,) * params['decoder_num_layers']
+        tf.get_variable_scope().reuse_variables()
 
-    my_decoder = decoder.Model(new_arch_outputs, encoder_state, decoder_inputs, None,
-                               params, tf.estimator.ModeKeys.PREDICT, 'Decoder')
-    new_sample_id = my_decoder.decode()
+        with tf.variable_scope('EPD', reuse=tf.AUTO_REUSE):
+            my_decoder = decoder.Model(new_arch_outputs, encoder_state, decoder_inputs, None,
+                                       params, tf.estimator.ModeKeys.PREDICT, 'Decoder')
+            new_sample_id = my_decoder.decode()
 
-    tf.logging.info('Starting Session')
-    config = tf.ConfigProto(allow_soft_placement=True)
-    new_sample_id_list = []
-    with tf.train.SingularMonitoredSession(
-            config=config, checkpoint_dir=params['model_dir']) as sess:
-        for _ in range(len(new_arch_outputs) // params['batch_size']):
+        tf.logging.info('Starting Session')
+        config = tf.ConfigProto(allow_soft_placement=True)
+        new_sample_id_list = []
+        with tf.train.SingularMonitoredSession(
+                config=config, checkpoint_dir=params['autoencoder_model_dir']) as sess:
             new_sample_id_v = sess.run(new_sample_id)
             new_sample_id_list.extend(new_sample_id_v.tolist())
-    return new_sample_id_list
+        return new_sample_id_list
 
 
 def get_train_ops(encoder_outputs, predictor_train_target, params,
@@ -125,16 +132,23 @@ def get_train_ops(encoder_outputs, predictor_train_target, params,
         return predictor.total_loss, learning_rate, train_op, global_step, grad_norm
 
 
-def get_predict_ops(encoder_outputs, decoder_inputs, params, reuse=tf.AUTO_REUSE):
+def get_predict_ops(encoder_outputs, params, reuse=tf.AUTO_REUSE):
     with tf.variable_scope('EPD', reuse=reuse):
+        def preprocess(encoder_src):
+            return encoder_src, tf.constant([SOS], dtype=tf.int32)
+        encoder_outputs = tf.convert_to_tensor(encoder_outputs, dtype=tf.float32)
+        dataset = tf.data.Dataset.from_tensor_slices(encoder_outputs)
+        dataset = dataset.map(preprocess)
+        dataset = dataset.batch(params['batch_size'])
+        iterator = dataset.make_one_shot_iterator()
+        encoder_outputs, decoder_inputs = iterator.get_next()
         predictor = encoder.Predictor(encoder_outputs,
                                       None,
                                       params,
                                       tf.estimator.ModeKeys.PREDICT)
         predictor.build()
-        predict_value, new_arch_emb, new_arch_outputs = predictor.infer()
-        new_sample_id = decode(params, decoder_inputs, new_arch_outputs)
-        return predict_value, new_sample_id
+        predict_value, _, new_arch_outputs = predictor.infer()
+        return predict_value, new_arch_outputs, decoder_inputs
 
 
 def input_fn(encoder_input, predictor_target, batch_size, params):
@@ -151,26 +165,8 @@ def input_fn(encoder_input, predictor_target, batch_size, params):
 
 
 def input_fn_predict(original_encoder_input, batch_size, params):
-    encoder_input = tf.convert_to_tensor(original_encoder_input, dtype=tf.int32)
-    encoder_input = tf.data.Dataset.from_tensor_slices(encoder_input)
-
-    def preprocess(encoder_src):
-        return encoder_src, tf.constant([SOS], dtype=tf.int32)
-
-    dataset = encoder_input.map(preprocess)
-    dataset = dataset.repeat(1)
-    dataset = dataset.batch(batch_size)
-    dataset = dataset.prefetch(10)
-    iterator = dataset.make_one_shot_iterator()
-    encoder_input, decoder_input = iterator.get_next()
-
     _, encoder_outputs = encode(params, original_encoder_input)
-    encoder_outputs = tf.convert_to_tensor(encoder_outputs, dtype=tf.float32)
-    dataset = tf.data.Dataset.from_tensor_slices(encoder_outputs)
-    dataset = dataset.batch(batch_size)
-    iterator = dataset.make_one_shot_iterator()
-    encoder_outputs = iterator.get_next()
-    return encoder_outputs, decoder_input
+    return encoder_outputs
 
 
 # encoder target is the list of performances of the architectures
@@ -178,6 +174,10 @@ def train(params, encoder_input, predictor_target):
     with tf.Graph().as_default():
         tf.logging.info('Training Encoder-Predictor-Decoder')
         tf.logging.info('Preparing data')
+        if not isinstance(predictor_target, np.ndarray):
+            predictor_target = np.array(predictor_target)
+        if len(predictor_target.shape) == 1:
+            predictor_target = predictor_target.reshape(predictor_target.shape[0], 1)
         encoder_outputs, predictor_train_target = input_fn(encoder_input,
                                                            predictor_target,
                                                            params['batch_size'],
@@ -230,18 +230,20 @@ def predict(params, encoder_input):
             'Generating new architectures using gradient descent with step size {}'.format(params['predict_lambda']))
         tf.logging.info('Preparing data')
         N = len(encoder_input)
-        encoder_outputs, decoder_inputs = input_fn_predict(encoder_input,
-                                                           params['batch_size'],
-                                                           params)
-        predict_value, new_sample_id = get_predict_ops(encoder_outputs, decoder_inputs, params)
+        encoder_outputs = input_fn_predict(encoder_input,
+                                           params['batch_size'],
+                                           params)
+        predict_value, new_arch_outputs, decoder_inputs = get_predict_ops(encoder_outputs, params)
         tf.logging.info('Starting Session')
         config = tf.ConfigProto(allow_soft_placement=True)
         new_sample_id_list = []
         with tf.train.SingularMonitoredSession(
                 config=config, checkpoint_dir=params['model_dir']) as sess:
             for _ in range(N // params['batch_size']):
-                new_sample_id_v = sess.run(new_sample_id)
+                new_sample_id_v = sess.run(new_arch_outputs)
                 new_sample_id_list.extend(new_sample_id_v.tolist())
+
+        new_sample_id_list = decode(params, decoder_inputs, np.array(new_sample_id_list))
         return new_sample_id_list
 
 
@@ -294,7 +296,7 @@ def main(unused_argv):
     with open(os.path.join(FLAGS.output_dir, 'hparams.json'), 'w') as f:
         json.dump(all_params, f)
     arch_pool = utils.generate_arch(num, 5, 5)
-    predictor_target = np.array([0.5] * num).reshape(num, 1)
+    predictor_target = np.array([0.5] * num).reshape(num)
     branch_length = 40 // 2 // 5 // 2
     encoder_input = list(
         map(lambda x: utils.parse_arch_to_seq(x[0], branch_length) + utils.parse_arch_to_seq(x[1], branch_length),
@@ -302,7 +304,9 @@ def main(unused_argv):
     controller_params = get_controller_params()
     controller_params['batches_per_epoch'] = math.ceil(len(encoder_input) / controller_params['batch_size'])
     train(controller_params, encoder_input, predictor_target)
-    predict(controller_params, encoder_input)
+    result = predict(controller_params, encoder_input)
+    result = np.array(result)
+    print(result.shape)
 
 
 parser = argparse.ArgumentParser()
