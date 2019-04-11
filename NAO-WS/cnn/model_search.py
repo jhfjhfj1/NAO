@@ -10,6 +10,7 @@ from data_utils import read_data
 import tensorflow as tf
 from tensorflow.python.training import moving_averages
 
+from params import Params
 from utils import count_model_params, get_train_ops
 
 
@@ -1076,41 +1077,10 @@ class Model(object):
         self._build_test()
 
 
-def get_ops(images, labels, params):
-    child_model = Model(
-        images,
-        labels,
-        use_aux_heads=params['use_aux_heads'],
-        cutout_size=params['cutout_size'],
-        num_layers=params['num_layers'],
-        num_cells=params['num_cells'],
-        fixed_arc=params['fixed_arc'],
-        out_filters_scale=params['out_filters_scale'],
-        out_filters=params['out_filters'],
-        keep_prob=params['keep_prob'],
-        drop_path_keep_prob=params['drop_path_keep_prob'],
-        num_epochs=params['num_epochs'],
-        l2_reg=params['l2_reg'],
-        data_format=params['data_format'],
-        batch_size=params['batch_size'],
-        eval_batch_size=params['eval_batch_size'],
-        clip_mode="norm",
-        grad_bound=params['grad_bound'],
-        lr_init=params['lr'],
-        lr_dec_every=params['lr_dec_every'],
-        lr_dec_rate=params['lr_dec_rate'],
-        lr_cosine=params['lr_cosine'],
-        lr_max=params['lr_max'],
-        lr_min=params['lr_min'],
-        lr_T_0=params['lr_T_0'],
-        lr_T_mul=params['lr_T_mul'],
-        optim_algo="momentum",
-        sync_replicas=params['sync_replicas'],
-        num_aggregate=params['num_aggregate'],
-        num_replicas=params['num_replicas'],
-    )
-    if params['fixed_arc'] is None:
-        child_model.connect_controller(params['arch_pool'], params['arch_pool_prob'])
+def get_ops(images, labels):
+    child_model = get_child_model(images, labels)
+    if Params.fixed_arc is None:
+        child_model.connect_controller(Params.arch_pool, Params.arch_pool_prob)
     else:
         child_model.connect_controller(None, None)
     ops = {
@@ -1122,23 +1092,59 @@ def get_ops(images, labels, params):
         "train_acc": child_model.train_acc,
         "optimizer": child_model.optimizer,
         "num_train_batches": child_model.num_train_batches,
-        "eval_every": child_model.num_train_batches * params['eval_every_epochs'],
-        "eval_func": child_model.eval_once,
+        "eval_every": child_model.num_train_batches * Params.eval_every_epochs,
+        "eval_func": child_model.eval_once
     }
     return ops
 
 
-def train(params):
+def get_child_model(images, labels):
+    child_model = Model(
+        images,
+        labels,
+        use_aux_heads=Params.use_aux_heads,
+        cutout_size=Params.cutout_size,
+        num_layers=Params.num_layers,
+        num_cells=Params.num_cells,
+        fixed_arc=Params.fixed_arc,
+        out_filters_scale=Params.out_filters_scale,
+        out_filters=Params.out_filters,
+        keep_prob=Params.keep_prob,
+        drop_path_keep_prob=Params.drop_path_keep_prob,
+        num_epochs=Params.num_epochs,
+        l2_reg=Params.l2_reg,
+        data_format=Params.data_format,
+        batch_size=Params.child_batch_size,
+        eval_batch_size=Params.eval_batch_size,
+        clip_mode="norm",
+        grad_bound=Params.grad_bound,
+        lr_init=Params.child_lr,
+        lr_dec_every=Params.lr_dec_every,
+        lr_dec_rate=Params.lr_dec_rate,
+        lr_cosine=Params.lr_cosine,
+        lr_max=Params.lr_max,
+        lr_min=Params.lr_min,
+        lr_T_0=Params.lr_T_0,
+        lr_T_mul=Params.lr_T_mul,
+        optim_algo="momentum",
+        sync_replicas=Params.sync_replicas,
+        num_aggregate=Params.num_aggregate,
+        num_replicas=Params.num_replicas
+    )
+    return child_model
+
+
+def train():
     g = tf.Graph()
     with g.as_default():
-        images, labels = read_data(params['data_dir'])
-        child_ops = get_ops(images, labels, params)
+        images, labels = read_data(Params.data_dir)
+        child_ops = get_ops(images, labels)
         saver = tf.train.Saver(max_to_keep=100)
         checkpoint_saver_hook = tf.train.CheckpointSaverHook(
-            params['model_dir'], save_steps=child_ops["num_train_batches"], saver=saver)
+            Params.child_model_dir, save_steps=child_ops["num_train_batches"], saver=saver)
 
         hooks = [checkpoint_saver_hook]
-        if params['sync_replicas']:
+        if Params.sync_replicas:
             sync_replicas_hook = child_ops["optimizer"].make_session_run_hook(True)
             hooks.append(sync_replicas_hook)
 
@@ -1146,7 +1152,7 @@ def train(params):
         tf.logging.info("Starting session")
         config = tf.ConfigProto(allow_soft_placement=True)
         with tf.train.SingularMonitoredSession(
-                config=config, hooks=hooks, checkpoint_dir=params['model_dir']) as sess:
+                config=config, hooks=hooks, checkpoint_dir=Params.child_model_dir) as sess:
             start_time = time.time()
             while True:
                 run_ops = [
@@ -1159,8 +1165,8 @@ def train(params):
                 loss, lr, gn, tr_acc, _ = sess.run(run_ops)
                 global_step = sess.run(child_ops["global_step"])
 
-                if params['sync_replicas']:
-                    actual_step = global_step * params['num_aggregate']
+                if Params.sync_replicas:
+                    actual_step = global_step * Params.num_aggregate
                 else:
                     actual_step = global_step
                 epoch = actual_step // child_ops["num_train_batches"]
@@ -1172,7 +1178,7 @@ def train(params):
                     log_string += " loss={:<8.6f}".format(loss)
                     log_string += " lr={:<8.4f}".format(lr)
                     log_string += " |g|={:<8.4f}".format(gn)
-                    log_string += " tr_acc={:<3d}/{:>3d}".format(tr_acc, params['batch_size'])
+                    log_string += " tr_acc={:<3d}/{:>3d}".format(tr_acc, Params.child_batch_size)
                     log_string += " mins={:<10.2f}".format(float(curr_time - start_time) / 60)
                     tf.logging.info(log_string)
 
@@ -1180,43 +1186,12 @@ def train(params):
                     return epoch
 
 
-def get_valid_ops(images, labels, params):
-    child_model = Model(
-        images,
-        labels,
-        use_aux_heads=params['use_aux_heads'],
-        cutout_size=params['cutout_size'],
-        num_layers=params['num_layers'],
-        num_cells=params['num_cells'],
-        fixed_arc=params['fixed_arc'],
-        out_filters_scale=params['out_filters_scale'],
-        out_filters=params['out_filters'],
-        keep_prob=params['keep_prob'],
-        drop_path_keep_prob=params['drop_path_keep_prob'],
-        num_epochs=params['num_epochs'],
-        l2_reg=params['l2_reg'],
-        data_format=params['data_format'],
-        batch_size=params['batch_size'],
-        eval_batch_size=params['eval_batch_size'],
-        clip_mode="norm",
-        grad_bound=params['grad_bound'],
-        lr_init=params['lr'],
-        lr_dec_every=params['lr_dec_every'],
-        lr_dec_rate=params['lr_dec_rate'],
-        lr_cosine=params['lr_cosine'],
-        lr_max=params['lr_max'],
-        lr_min=params['lr_min'],
-        lr_T_0=params['lr_T_0'],
-        lr_T_mul=params['lr_T_mul'],
-        optim_algo="momentum",
-        sync_replicas=params['sync_replicas'],
-        num_aggregate=params['num_aggregate'],
-        num_replicas=params['num_replicas'],
-    )
-    if params['fixed_arc'] is None:
+def get_valid_ops(images, labels):
+    child_model = get_child_model(images, labels)
+    if Params.fixed_arc is None:
         # The arch_pool is a list of cell pairs, each cell is a list of mixed nodes and operations, every 4 elements
         # is one node.
-        arch_pool = tf.convert_to_tensor(params['arch_pool'], dtype=tf.int32)
+        arch_pool = tf.convert_to_tensor(Params.arch_pool, dtype=tf.int32)
         arch_pool = tf.data.Dataset.from_tensor_slices(arch_pool)
         arch_pool = arch_pool.map(lambda x: (x[0], x[1]))
         iterator = arch_pool.make_one_shot_iterator()
@@ -1239,19 +1214,19 @@ def get_valid_ops(images, labels, params):
 # The params is a dictionary contains a lot of information,
 # including the architectures to be validated.
 # validate means get the evaluation metric value (accuracy) on the validation set.
-def valid(params):
+def valid():
     # defining a new computational graph
     g = tf.Graph()
     with g.as_default():
-        images, labels = read_data(params['data_dir'])
-        child_ops = get_valid_ops(images, labels, params)
+        images, labels = read_data(Params.data_dir)
+        child_ops = get_valid_ops(images, labels)
         tf.logging.info("-" * 80)
         tf.logging.info("Starting session")
         config = tf.ConfigProto(allow_soft_placement=True)
-        N = len(params['arch_pool'])
+        N = len(Params.arch_pool)
         valid_acc_list = []
         with tf.train.SingularMonitoredSession(
-                config=config, checkpoint_dir=params['model_dir']) as sess:
+                config=config, checkpoint_dir=Params.child_model_dir) as sess:
             start_time = time.time()
             # Looping over all the architectures
             for i in range(N):

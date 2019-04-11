@@ -6,6 +6,8 @@ import tensorflow as tf
 from tensorflow.python.framework import ops
 from tensorflow.contrib.seq2seq.python.ops.basic_decoder import BasicDecoderOutput
 
+from params import Params
+
 INF = 1 << 16
 
 
@@ -157,19 +159,19 @@ class MyDecoder(tf.contrib.seq2seq.BasicDecoder):
 
 
 class Decoder():
-    def __init__(self, params, mode, embedding_decoder, output_layer):
-        self.num_layers = params['decoder_num_layers']
-        self.hidden_size = params['decoder_hidden_size']
-        self.length = params['decoder_length']
-        self.source_length = params['encoder_length']
-        self.vocab_size = params['decoder_vocab_size']
-        self.dropout = params['decoder_dropout']
+    def __init__(self, mode, embedding_decoder, output_layer):
+        self.num_layers = Params.decoder_num_layers
+        self.hidden_size = Params.decoder_hidden_size
+        self.length = Params.decoder_length
+        self.source_length = Params.encoder_length
+        self.vocab_size = Params.decoder_vocab_size
+        self.dropout = Params.decoder_dropout
         self.embedding_decoder = embedding_decoder
         self.output_layer = output_layer
-        self.time_major = params['time_major']
-        self.beam_width = params['predict_beam_width']
-        self.attn = params['attention']
-        self.pass_hidden_state = params.get('pass_hidden_state', True)
+        self.time_major = Params.time_major
+        self.beam_width = Params.predict_beam_width
+        self.attn = Params.attention
+        self.pass_hidden_state = Params.pass_hidden_state if Params.pass_hidden_state is not None else True
         self.mode = mode
 
     def build_decoder(self, encoder_outputs, encoder_state, target_input, batch_size):
@@ -343,27 +345,25 @@ class Model(object):
                  encoder_state,
                  target_input,
                  target,
-                 params,
                  mode,
                  scope=None,
                  reuse=tf.AUTO_REUSE):
         """Create the model."""
-        self.params = params
         self.encoder_outputs = encoder_outputs
         self.encoder_state = encoder_state
         self.target_input = target_input
         self.target = target
         self.batch_size = tf.shape(self.target_input)[0]
         self.mode = mode
-        self.vocab_size = params['decoder_vocab_size']
-        self.num_layers = params['decoder_num_layers']
-        self.decoder_length = params['decoder_length']
-        self.time_major = params['time_major']
-        self.hidden_size = params['decoder_hidden_size']
-        self.weight_decay = params['weight_decay']
+        self.vocab_size = Params.decoder_vocab_size
+        self.num_layers = Params.decoder_num_layers
+        self.decoder_length = Params.decoder_length
+        self.time_major = Params.time_major
+        self.hidden_size = Params.decoder_hidden_size
+        self.weight_decay = Params.weight_decay
         self.is_traing = mode == tf.estimator.ModeKeys.TRAIN
         if not self.is_traing:
-            self.params['decoder_dropout'] = 0.0
+            Params.decoder_dropout = 0.0
         self.branch_length = self.decoder_length // 2 // 5 // 2  # 2 types of cell, 5 nodes, 2 branchs
 
         # Initializer
@@ -394,7 +394,7 @@ class Model(object):
                 self.total_loss = None
 
     def build_decoder(self):
-        decoder = Decoder(self.params, self.mode, self.W_emb, self.output_layer)
+        decoder = Decoder(self.mode, self.W_emb, self.output_layer)
         logits, sample_id, final_context_state = decoder.build_decoder(
             self.encoder_outputs, self.encoder_state, self.target_input, self.batch_size)
         return logits, sample_id, final_context_state
@@ -420,33 +420,33 @@ class Model(object):
     def train(self):
         assert self.mode == tf.estimator.ModeKeys.TRAIN
         self.global_step = tf.train.get_or_create_global_step()
-        self.learning_rate = tf.constant(self.params['lr'])
+        self.learning_rate = tf.constant(Params.controller_lr)
         # Gradients and SGD update operation for training the model.
         # Arrage for the embedding vars to appear at the beginning.
-        if self.params['optimizer'] == "sgd":
+        if Params.optimizer == "sgd":
             self.learning_rate = tf.cond(
-                self.global_step < self.params['start_decay_step'],
+                self.global_step < Params.start_decay_step,
                 lambda: self.learning_rate,
                 lambda: tf.train.exponential_decay(
                     self.learning_rate,
-                    (self.global_step - self.params['start_decay_step']),
-                    self.params['decay_steps'],
-                    self.params['decay_factor'],
+                    (self.global_step - Params.start_decay_step),
+                    Params.decay_steps,
+                    Params.decay_factor,
                     staircase=True),
                 name="learning_rate")
             opt = tf.train.GradientDescentOptimizer(self.learning_rate)
-        elif self.params['optimizer'] == "adam":
+        elif Params.optimizer == "adam":
             assert float(
-                self.params['lr']
-            ) <= 0.001, "! High Adam learning rate %g" % self.params['lr']
+                Params.controller_lr
+            ) <= 0.001, "! High Adam learning rate %g" % Params.controller_lr
             opt = tf.train.AdamOptimizer(self.learning_rate)
-        elif self.params['optimizer'] == 'adadelta':
+        elif Params.optimizer == 'adadelta':
             opt = tf.train.AdadeltaOptimizer(learning_rate=self.learning_rate)
 
         update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
         with tf.control_dependencies(update_ops):
             gradients, variables = zip(*opt.compute_gradients(self.total_loss))
-            clipped_gradients, _ = tf.clip_by_global_norm(gradients, self.params['max_gradient_norm'])
+            clipped_gradients, _ = tf.clip_by_global_norm(gradients, Params.max_gradient_norm)
             self.train_op = opt.apply_gradients(
                 zip(clipped_gradients, variables), global_step=self.global_step)
 

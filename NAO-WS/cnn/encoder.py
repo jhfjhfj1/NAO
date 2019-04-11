@@ -5,25 +5,26 @@ from __future__ import print_function
 import random
 import tensorflow as tf
 
+from params import Params
+
 _BATCH_NORM_DECAY = 0.9
 _BATCH_NORM_EPSILON = 1e-5
 
 
 class Predictor:
-    def __init__(self, encoder_outputs, target, params, mode):
+    def __init__(self, encoder_outputs, target, mode):
         self.encoder_outputs = encoder_outputs
         self.target = target
-        self.emb_size = params['encoder_emb_size']
-        self.mlp_num_layers = params['mlp_num_layers']
-        self.mlp_hidden_size = params['mlp_hidden_size']
-        self.mlp_dropout = params['mlp_dropout']
-        self.dropout = params['encoder_dropout']
+        self.emb_size = Params.encoder_emb_size
+        self.mlp_num_layers = Params.mlp_num_layers
+        self.mlp_hidden_size = Params.mlp_hidden_size
+        self.mlp_dropout = Params.mlp_dropout
+        self.dropout = Params.encoder_dropout
         self.output = None
         self.loss = None
-        self.params = params
-        self.weight_decay = params['weight_decay']
+        self.weight_decay = Params.weight_decay
         self.mode = mode
-        self.time_major = params['time_major']
+        self.time_major = Params.time_major
         self.prediction = None
         self.arch_emb = None
 
@@ -61,7 +62,7 @@ class Predictor:
         assert self.mode == tf.estimator.ModeKeys.PREDICT
         grads_on_outputs = tf.gradients(self.prediction, self.encoder_outputs)[0]
         # lambdas = tf.expand_dims(tf.expand_dims(lambdas, axis=-1), axis=-1)
-        new_arch_outputs = self.encoder_outputs - self.params['predict_lambda'] * grads_on_outputs
+        new_arch_outputs = self.encoder_outputs - Params.predict_lambda * grads_on_outputs
         new_arch_outputs = tf.nn.l2_normalize(new_arch_outputs, dim=-1)
         if self.time_major:
             new_arch_emb = tf.reduce_mean(new_arch_outputs, axis=0)
@@ -72,21 +73,20 @@ class Predictor:
 
 
 class Encoder(object):
-    def __init__(self, x, params, mode, scope='Encoder', reuse=tf.AUTO_REUSE):
+    def __init__(self, x, mode, scope='Encoder', reuse=tf.AUTO_REUSE):
         self.x = x
-        self.params = params
         self.batch_size = tf.shape(x)[0]
-        self.vocab_size = params['encoder_vocab_size']
-        self.emb_size = params['encoder_emb_size']
-        self.hidden_size = params['encoder_hidden_size']
-        self.encoder_length = params['encoder_length']
-        self.weight_decay = params['weight_decay']
+        self.vocab_size = Params.encoder_vocab_size
+        self.emb_size = Params.encoder_emb_size
+        self.hidden_size = Params.encoder_hidden_size
+        self.encoder_length = Params.encoder_length
+        self.weight_decay = Params.weight_decay
         self.mode = mode
-        self.time_major = params['time_major']
+        self.time_major = Params.time_major
         self.is_training = self.mode == tf.estimator.ModeKeys.TRAIN
         if not self.is_training:
-            self.params['encoder_dropout'] = 0.0
-            self.params['mlp_dropout'] = 0.0
+            Params.encoder_dropout = 0.0
+            Params.mlp_dropout = 0.0
 
         # initializer = tf.orthogonal_initializer()
         initializer = tf.random_uniform_initializer(-0.1, 0.1)
@@ -106,19 +106,18 @@ class Encoder(object):
                 self.total_loss = None
 
     def build_encoder(self):
-        params = self.params
         #encoder init
-        self.num_layers = params['encoder_num_layers']
-        self.hidden_size = params['encoder_hidden_size']
-        self.emb_size = params['encoder_emb_size']
-        self.mlp_num_layers = params['mlp_num_layers']
-        self.mlp_hidden_size = params['mlp_hidden_size']
-        self.mlp_dropout = params['mlp_dropout']
-        self.source_length = params['source_length']
-        self.encoder_length = params['encoder_length']
-        self.vocab_size = params['encoder_vocab_size']
-        self.dropout = params['encoder_dropout']
-        self.time_major = params['time_major']
+        self.num_layers = Params.encoder_num_layers
+        self.hidden_size = Params.encoder_hidden_size
+        self.emb_size = Params.encoder_emb_size
+        self.mlp_num_layers = Params.mlp_num_layers
+        self.mlp_hidden_size = Params.mlp_hidden_size
+        self.mlp_dropout = Params.mlp_dropout
+        self.source_length = Params.source_length
+        self.encoder_length = Params.encoder_length
+        self.vocab_size = Params.encoder_vocab_size
+        self.dropout = Params.encoder_dropout
+        self.time_major = Params.time_major
 
         x = self.x
         batch_size = self.batch_size
@@ -185,31 +184,31 @@ class Encoder(object):
     def train(self):
         assert self.mode == tf.estimator.ModeKeys.TRAIN
         self.global_step = tf.train.get_or_create_global_step()
-        self.learning_rate = tf.constant(self.params['lr'])
-        if self.params['optimizer'] == "sgd":
+        self.learning_rate = tf.constant(Params.controller_lr)
+        if Params.optimizer == "sgd":
             self.learning_rate = tf.cond(
-                self.global_step < self.params['start_decay_step'],
+                self.global_step < Params.start_decay_step,
                 lambda: self.learning_rate,
                 lambda: tf.train.exponential_decay(
                     self.learning_rate,
-                    (self.global_step - self.params['start_decay_step']),
-                    self.params['decay_steps'],
-                    self.params['decay_factor'],
+                    (self.global_step - Params.start_decay_step),
+                    Params.decay_steps,
+                    Params.decay_factor,
                     staircase=True),
                 name="learning_rate")
             opt = tf.train.GradientDescentOptimizer(self.learning_rate)
-        elif self.params['optimizer'] == "adam":
+        elif Params.optimizer == "adam":
             assert float(
-                self.params['lr']
-            ) <= 0.001, "! High Adam learning rate %g" % self.params['lr']
+                Params.controller_lr
+            ) <= 0.001, "! High Adam learning rate %g" % Params.controller_lr
             opt = tf.train.AdamOptimizer(self.learning_rate)
-        elif self.params['optimizer'] == 'adadelta':
+        elif Params.optimizer == 'adadelta':
             opt = tf.train.AdadeltaOptimizer(learning_rate=self.learning_rate)
 
         update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
         with tf.control_dependencies(update_ops):
             gradients, variables = zip(*opt.compute_gradients(self.total_loss))
-            clipped_gradients, _ = tf.clip_by_global_norm(gradients, self.params['max_gradient_norm'])
+            clipped_gradients, _ = tf.clip_by_global_norm(gradients, Params.max_gradient_norm)
             self.train_op = opt.apply_gradients(
                 zip(clipped_gradients, variables), global_step=self.global_step)
 
