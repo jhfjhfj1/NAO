@@ -4,12 +4,21 @@ import pickle
 import numpy as np
 import tensorflow as tf
 
+from params import Params
 
-def read_data(data_path, num_valids=5000, dataset='CIFAR10'):
+
+def read_data(data_path=None, num_valids=5000):
+    dataset = Params.dataset
     if dataset == 'CIFAR10':
         images, labels = cifar10(data_path)
     elif dataset == 'SVHN':
         images, labels = svhn(data_path)
+    elif dataset == 'MNIST':
+        images, labels = mnist()
+    elif dataset == 'FASHION':
+        images, labels = fashion()
+    elif dataset == 'STL':
+        images, labels = stl(data_path)
     else:
         images, labels = {}, {}
 

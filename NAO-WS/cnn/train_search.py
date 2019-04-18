@@ -86,7 +86,7 @@ def train():
         old_archs_sorted_indices = np.argsort(old_archs_perf)
         old_archs = np.array(old_archs)[old_archs_sorted_indices].tolist()
         old_archs_perf = np.array(old_archs_perf)[old_archs_sorted_indices].tolist()
-        child_model_dir = Params.child_model_dir
+        child_model_dir = Params.get_child_model_dir()
         with open(os.path.join(child_model_dir, 'arch_pool.{}'.format(child_epoch)), 'w') as fa:
             with open(os.path.join(child_model_dir, 'arch_pool.perf.{}'.format(child_epoch)), 'w') as fp:
                 with open(os.path.join(child_model_dir, 'arch_pool'), 'w') as fa_latest:
@@ -116,7 +116,11 @@ def train():
         predictor_target = [(i - min_val) / (max_val - min_val) for i in old_archs_perf]
         Params.batches_per_epoch = math.ceil(len(encoder_input) / Params.controller_batch_size)
         # if clean controller model
-        encoder_input, predictor_target = augment(encoder_input, predictor_target)
+        if Params.augment:
+            history = augment(encoder_input, predictor_target)
+            for archs, perfs, _ in history:
+                encoder_input += archs
+                predictor_target += perfs
         controller.train(encoder_input, predictor_target)
 
         # Generate new archs

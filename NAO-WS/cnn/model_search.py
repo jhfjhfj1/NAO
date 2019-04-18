@@ -1141,7 +1141,7 @@ def train():
         child_ops = get_ops(images, labels)
         saver = tf.train.Saver(max_to_keep=100)
         checkpoint_saver_hook = tf.train.CheckpointSaverHook(
-            Params.child_model_dir, save_steps=child_ops["num_train_batches"], saver=saver)
+            Params.get_child_model_dir(), save_steps=child_ops["num_train_batches"], saver=saver)
 
         hooks = [checkpoint_saver_hook]
         if Params.sync_replicas:
@@ -1152,7 +1152,7 @@ def train():
         tf.logging.info("Starting session")
         config = tf.ConfigProto(allow_soft_placement=True)
         with tf.train.SingularMonitoredSession(
-                config=config, hooks=hooks, checkpoint_dir=Params.child_model_dir) as sess:
+                config=config, hooks=hooks, checkpoint_dir=Params.get_child_model_dir()) as sess:
             start_time = time.time()
             while True:
                 run_ops = [
@@ -1226,7 +1226,7 @@ def valid():
         N = len(Params.arch_pool)
         valid_acc_list = []
         with tf.train.SingularMonitoredSession(
-                config=config, checkpoint_dir=Params.child_model_dir) as sess:
+                config=config, checkpoint_dir=Params.get_child_model_dir()) as sess:
             start_time = time.time()
             # Looping over all the architectures
             for i in range(N):

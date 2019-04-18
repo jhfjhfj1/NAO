@@ -29,7 +29,7 @@ def encode(original_encoder_input):
         tf.logging.info('Preparing data')
         encoder_input = tf.convert_to_tensor(original_encoder_input, dtype=tf.int32)
         encoder_input = tf.data.Dataset.from_tensor_slices(encoder_input)
-        encoder_input = encoder_input.batch(Params.controller_batch_size)
+        encoder_input = encoder_input.batch(N)
         iterator = encoder_input.make_one_shot_iterator()
         encoder_input = iterator.get_next()
 
@@ -42,16 +42,14 @@ def encode(original_encoder_input):
         arch_embed, encoder_outputs = [], []
         with tf.train.SingularMonitoredSession(
                 config=config, checkpoint_dir=Params.autoencoder_model_dir) as sess:
-            for _ in range(N // Params.controller_batch_size):
-                a, b = sess.run(embed)
-                arch_embed.append(a)
-                encoder_outputs.append(b)
+            a, b = sess.run(embed)
+            arch_embed.append(a)
+            encoder_outputs.append(b)
         arch_embed = np.array(arch_embed)
         encoder_outputs = np.array(encoder_outputs)
         encoder_outputs = encoder_outputs.transpose([0, 2, 1, 3])
-        return arch_embed.reshape(
-            (arch_embed.shape[0] * arch_embed.shape[1],) + arch_embed.shape[2:]), encoder_outputs.reshape(
-            (encoder_outputs.shape[0] * encoder_outputs.shape[1],) + encoder_outputs.shape[2:])
+        return arch_embed.reshape((arch_embed.shape[0] * arch_embed.shape[1],) + arch_embed.shape[2:]),\
+               encoder_outputs.reshape((encoder_outputs.shape[0] * encoder_outputs.shape[1],) + encoder_outputs.shape[2:])
 
 
 def decode(decoder_inputs, new_arch_outputs):
@@ -189,14 +187,14 @@ def train(encoder_input, predictor_target):
                                                                                     predictor_train_target)
         saver = tf.train.Saver(max_to_keep=10)
         checkpoint_saver_hook = tf.train.CheckpointSaverHook(
-            Params.controller_model_dir, save_steps=Params.batches_per_epoch * Params.save_frequency, saver=saver)
+            Params.get_controller_model_dir(), save_steps=Params.batches_per_epoch * Params.save_frequency, saver=saver)
         hooks = [checkpoint_saver_hook]
         merged_summary = tf.summary.merge_all()
         tf.logging.info('Starting Session')
         config = tf.ConfigProto(allow_soft_placement=True)
         with tf.train.SingularMonitoredSession(
-                config=config, hooks=hooks, checkpoint_dir=Params.controller_model_dir) as sess:
-            writer = tf.summary.FileWriter(Params.controller_model_dir, sess.graph)
+                config=config, hooks=hooks, checkpoint_dir=Params.get_controller_model_dir()) as sess:
+            writer = tf.summary.FileWriter(Params.get_controller_model_dir(), sess.graph)
             start_time = time.time()
             for step in range(Params.train_epochs * Params.batches_per_epoch):
                 run_ops = [
@@ -238,7 +236,7 @@ def predict(encoder_input):
         config = tf.ConfigProto(allow_soft_placement=True)
         new_sample_id_list = []
         with tf.train.SingularMonitoredSession(
-                config=config, checkpoint_dir=Params.controller_model_dir) as sess:
+                config=config, checkpoint_dir=Params.get_controller_model_dir()) as sess:
             for _ in range(N // Params.controller_batch_size):
                 new_sample_id_v = sess.run(new_arch_outputs)
                 new_sample_id_list.extend(new_sample_id_v.tolist())
