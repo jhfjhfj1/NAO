@@ -2,6 +2,10 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+import os
+
+os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"  # see issue #152
+os.environ["CUDA_VISIBLE_DEVICES"] = "2"
 import json
 
 import argparse
@@ -48,8 +52,9 @@ def encode(original_encoder_input):
         arch_embed = np.array(arch_embed)
         encoder_outputs = np.array(encoder_outputs)
         encoder_outputs = encoder_outputs.transpose([0, 2, 1, 3])
-        return arch_embed.reshape((arch_embed.shape[0] * arch_embed.shape[1],) + arch_embed.shape[2:]),\
-               encoder_outputs.reshape((encoder_outputs.shape[0] * encoder_outputs.shape[1],) + encoder_outputs.shape[2:])
+        return arch_embed.reshape((arch_embed.shape[0] * arch_embed.shape[1],) + arch_embed.shape[2:]), \
+               encoder_outputs.reshape(
+                   (encoder_outputs.shape[0] * encoder_outputs.shape[1],) + encoder_outputs.shape[2:])
 
 
 def decode(decoder_inputs, new_arch_outputs):
@@ -131,10 +136,11 @@ def get_train_ops(encoder_outputs, predictor_train_target,
         return predictor.total_loss, learning_rate, train_op, global_step, grad_norm
 
 
-def get_predict_ops(encoder_outputs, reuse=tf.AUTO_REUSE):
+def get_generate_ops(encoder_outputs, reuse=tf.AUTO_REUSE):
     with tf.variable_scope('EPD', reuse=reuse):
         def preprocess(encoder_src):
             return encoder_src, tf.constant([SOS], dtype=tf.int32)
+
         encoder_outputs = tf.convert_to_tensor(encoder_outputs, dtype=tf.float32)
         dataset = tf.data.Dataset.from_tensor_slices(encoder_outputs)
         dataset = dataset.map(preprocess)
@@ -147,6 +153,21 @@ def get_predict_ops(encoder_outputs, reuse=tf.AUTO_REUSE):
         predictor.build()
         predict_value, _, new_arch_outputs = predictor.infer()
         return predict_value, new_arch_outputs, decoder_inputs
+
+
+def get_predict_ops(encoder_outputs, reuse=tf.AUTO_REUSE):
+    with tf.variable_scope('EPD', reuse=reuse):
+        batch_size = len(encoder_outputs)
+        encoder_outputs = tf.convert_to_tensor(encoder_outputs, dtype=tf.float32)
+        dataset = tf.data.Dataset.from_tensor_slices(encoder_outputs)
+        dataset = dataset.batch(batch_size)
+        iterator = dataset.make_one_shot_iterator()
+        encoder_outputs = iterator.get_next()
+        predictor = encoder.Predictor(encoder_outputs,
+                                      None,
+                                      tf.estimator.ModeKeys.PREDICT)
+        predictor.build()
+        return predictor.prediction
 
 
 def input_fn(encoder_input, predictor_target, batch_size):
@@ -165,7 +186,7 @@ def input_fn(encoder_input, predictor_target, batch_size):
     return encoder_outputs, predictor_target
 
 
-def input_fn_predict(original_encoder_input, batch_size):
+def input_fn_predict(original_encoder_input):
     _, encoder_outputs = encode(original_encoder_input)
     return encoder_outputs
 
@@ -228,10 +249,25 @@ def predict(encoder_input):
         tf.logging.info(
             'Generating new architectures using gradient descent with step size {}'.format(Params.predict_lambda))
         tf.logging.info('Preparing data')
+        encoder_outputs = input_fn_predict(encoder_input)
+        predict_value = get_predict_ops(encoder_outputs)
+        tf.logging.info('Starting Session')
+        config = tf.ConfigProto(allow_soft_placement=True)
+        with tf.train.SingularMonitoredSession(
+                config=config, checkpoint_dir=Params.get_controller_model_dir()) as sess:
+            pred = sess.run(predict_value)
+
+        return pred
+
+
+def generate(encoder_input):
+    with tf.Graph().as_default():
+        tf.logging.info(
+            'Generating new architectures using gradient descent with step size {}'.format(Params.predict_lambda))
+        tf.logging.info('Preparing data')
         N = len(encoder_input)
-        encoder_outputs = input_fn_predict(encoder_input,
-                                           Params.controller_batch_size)
-        predict_value, new_arch_outputs, decoder_inputs = get_predict_ops(encoder_outputs)
+        encoder_outputs = input_fn_predict(encoder_input)
+        predict_value, new_arch_outputs, decoder_inputs = get_generate_ops(encoder_outputs)
         tf.logging.info('Starting Session')
         config = tf.ConfigProto(allow_soft_placement=True)
         new_sample_id_list = []
@@ -261,16 +297,15 @@ def main(unused_argv):
             arch_pool))
     Params.batches_per_epoch = math.ceil(len(encoder_input) / Params.controller_batch_size)
     train(encoder_input, predictor_target)
+    result = generate(encoder_input)
+    result = np.array(result)
+    print(result.shape)
     result = predict(encoder_input)
     result = np.array(result)
     print(result.shape)
 
 
 if __name__ == '__main__':
-    import os
-
-    os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"  # see issue #152
-    os.environ["CUDA_VISIBLE_DEVICES"] = "2"
 
     if tf.test.gpu_device_name():
         print('Default GPU Device: {}'.format(tf.test.gpu_device_name()))

@@ -134,7 +134,7 @@ def train():
         new_arch_lower_bound = int(Params.num_seed_arch / 2)
         while len(new_archs) < new_arch_lower_bound:
             Params.predict_lambda += 1
-            new_arch = controller.predict(top100_archs)
+            new_arch = controller.generate(top100_archs)
             for arch in new_arch:
                 if arch not in encoder_input and arch not in new_archs:
                     new_archs.append(arch)

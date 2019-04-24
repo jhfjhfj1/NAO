@@ -92,7 +92,7 @@ class Params:
     def set_params(cls, flags):
         # controller_params
         cls.output_dir = flags.output_dir
-        cls.autoencoder_model_dir = os.path.join(flags.output_dir, 'autoencoder')
+        cls.autoencoder_model_dir = 'autoencoder'
         cls.num_seed_arch = flags.controller_num_seed_arch
         cls.encoder_num_layers = flags.controller_encoder_num_layers
         cls.encoder_hidden_size = flags.controller_encoder_hidden_size

@@ -2,14 +2,13 @@ import pickle
 
 import numpy as np
 import os
-from random import random
 from scipy.special import softmax
 from sklearn.metrics import pairwise_distances
 
 import utils
 from data_utils import read_data
 from params import Params, set_params
-from controller import encode
+from controller import encode, predict
 from utils import generate_arch
 
 
@@ -37,14 +36,14 @@ def load_history():
     history = []
     controller_paths = []
     for file in os.listdir(os.fsencode(Params.history_dir)):
-        dir_path = os.path.join(os.fsencode(Params.history_dir), 'child', os.fsencode(file))
-        controller_paths.append(os.path.join(os.fsencode(Params.history_dir), 'controller', os.fsencode(file)))
+        dir_path = os.path.join(os.fsencode(Params.history_dir), os.fsencode(file), os.fsencode('child'))
+        controller_paths.append(os.path.join(os.fsencode(Params.history_dir), os.fsencode(file), os.fsencode('controller')))
         if not os.path.isdir(dir_path):
             continue
         arch_list = []
         perf_list = []
         for my_file in os.listdir(dir_path):
-            if not os.fsencode(my_file).startswith('history'):
+            if not my_file.decode("utf-8").startswith('history'):
                 continue
             path = os.path.join(dir_path, my_file)
             archs, perf = pickle.load(open(path, 'rb'))
@@ -55,7 +54,7 @@ def load_history():
                                                                                                       branch_length),
                                      archs))
             arch_list += encoder_input
-            perf_list += perf.tolist()
+            perf_list += perf
         history.append((arch_list, perf_list))
     return history, controller_paths
 
@@ -78,6 +77,7 @@ def augment(encoder_input, predictor_output):
     n_archs = len(unique_archs)
     mean = np.zeros((n_tasks, n_archs))
     for index, (arch_list, perf_list) in enumerate(history):
+        mean[index] = np.array(predict(unique_archs)).flatten()
         for arch, perf in zip(arch_list, perf_list):
             mean[index, arch_to_id[tuple(arch)]] = perf
 
@@ -127,9 +127,9 @@ def slice_dataset_by_class(images, labels, save_path):
 
 
 def slice_datasets():
-    images, labels = read_data(dataset='MNIST')
+    images, labels = read_data()
     slice_dataset_by_class(images, labels, 'data/sliced_mnist')
-    images, labels = read_data('data/cifar10', dataset='CIFAR10')
+    images, labels = read_data('data/cifar10')
     slice_dataset_by_class(images, labels, 'data/sliced_cifar10')
 
 
