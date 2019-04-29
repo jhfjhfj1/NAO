@@ -78,7 +78,7 @@ parser.add_argument('--child_data_format', type=str, default="NHWC", choices=['N
 
 def test():
   params = get_child_model_params()
-  images, labels = read_data(params['data_dir'], num_valids=0)
+  images, labels = read_data(num_valids=0)
   g = tf.Graph()
   with g.as_default():
     ops = get_ops(images, labels, params)

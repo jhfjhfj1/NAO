@@ -3,9 +3,6 @@ from __future__ import division
 from __future__ import print_function
 
 import os
-
-os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"  # see issue #152
-os.environ["CUDA_VISIBLE_DEVICES"] = "2"
 import json
 
 import argparse
@@ -14,10 +11,10 @@ import sys
 
 import numpy as np
 import tensorflow as tf
-import encoder
-import decoder
 import time
 
+import encoder
+import decoder
 import utils
 from params import Params, set_params
 
@@ -96,9 +93,10 @@ def decode(decoder_inputs, new_arch_outputs):
 
 
 def get_train_ops(encoder_outputs, predictor_train_target,
+                  weights,
                   reuse=tf.AUTO_REUSE):
     with tf.variable_scope('EPD', reuse=reuse):
-        predictor = encoder.Predictor(encoder_outputs, predictor_train_target, tf.estimator.ModeKeys.TRAIN)
+        predictor = encoder.Predictor(encoder_outputs, predictor_train_target, weights, tf.estimator.ModeKeys.TRAIN)
         predictor.build()
         predictor.compute_loss()
 
@@ -149,6 +147,7 @@ def get_generate_ops(encoder_outputs, reuse=tf.AUTO_REUSE):
         encoder_outputs, decoder_inputs = iterator.get_next()
         predictor = encoder.Predictor(encoder_outputs,
                                       None,
+                                      None,
                                       tf.estimator.ModeKeys.PREDICT)
         predictor.build()
         predict_value, _, new_arch_outputs = predictor.infer()
@@ -165,12 +164,13 @@ def get_predict_ops(encoder_outputs, reuse=tf.AUTO_REUSE):
         encoder_outputs = iterator.get_next()
         predictor = encoder.Predictor(encoder_outputs,
                                       None,
+                                      None,
                                       tf.estimator.ModeKeys.PREDICT)
         predictor.build()
         return predictor.prediction
 
 
-def input_fn(encoder_input, predictor_target, batch_size):
+def input_fn(encoder_input, predictor_target, weights, batch_size):
     # The encoder_input and predictor_target in the parameters are converted to tf tensors and wrapped into datasets
     # ready to be input into tf models.
     # The encoder_input are the representation of architectures and are embedded before wrap.
@@ -179,11 +179,13 @@ def input_fn(encoder_input, predictor_target, batch_size):
     encoder_outputs = tf.data.Dataset.from_tensor_slices(encoder_outputs)
     predictor_target = tf.convert_to_tensor(predictor_target, dtype=tf.float32)
     predictor_target = tf.data.Dataset.from_tensor_slices(predictor_target)
-    dataset = tf.data.Dataset.zip((encoder_outputs, predictor_target))
+    weights = tf.convert_to_tensor(weights, dtype=tf.float32)
+    weights = tf.data.Dataset.from_tensor_slices(weights)
+    dataset = tf.data.Dataset.zip((encoder_outputs, predictor_target, weights))
     dataset = dataset.batch(batch_size)
     iterator = dataset.make_one_shot_iterator()
-    encoder_outputs, predictor_target = iterator.get_next()
-    return encoder_outputs, predictor_target
+    encoder_outputs, predictor_target, weights = iterator.get_next()
+    return encoder_outputs, predictor_target, weights
 
 
 def input_fn_predict(original_encoder_input):
@@ -192,7 +194,9 @@ def input_fn_predict(original_encoder_input):
 
 
 # encoder target is the list of performances of the architectures
-def train(encoder_input, predictor_target):
+def train(encoder_input, predictor_target, weight=None):
+    if weight is None:
+        weight = np.ones((len(encoder_input), 1))
     with tf.Graph().as_default():
         tf.logging.info('Training Encoder-Predictor-Decoder')
         tf.logging.info('Preparing data')
@@ -200,12 +204,14 @@ def train(encoder_input, predictor_target):
             predictor_target = np.array(predictor_target)
         if len(predictor_target.shape) == 1:
             predictor_target = predictor_target.reshape(predictor_target.shape[0], 1)
-        encoder_outputs, predictor_train_target = input_fn(encoder_input,
-                                                           predictor_target,
-                                                           Params.controller_batch_size)
+        encoder_outputs, predictor_train_target, weights = input_fn(encoder_input,
+                                                                    predictor_target,
+                                                                    weight,
+                                                                    Params.controller_batch_size)
         tf.logging.info('Building model')
         train_loss, learning_rate, train_op, global_step, grad_norm = get_train_ops(encoder_outputs,
-                                                                                    predictor_train_target)
+                                                                                    predictor_train_target,
+                                                                                    weights)
         saver = tf.train.Saver(max_to_keep=10)
         checkpoint_saver_hook = tf.train.CheckpointSaverHook(
             Params.get_controller_model_dir(), save_steps=Params.batches_per_epoch * Params.save_frequency, saver=saver)

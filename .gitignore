@@ -1,3 +1,6 @@
+autoencoder/
+autoencoder_backup/
+tf_record_data
 .idea
 /data
 /models

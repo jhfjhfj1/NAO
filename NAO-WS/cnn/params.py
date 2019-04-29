@@ -8,7 +8,8 @@ import utils
 
 class Params:
     augment = True
-    dataset = 'CIFAR10'
+    dataset = 'cifar10'
+    base_dir = None
     arch_pool_prob = None
     batches_per_epoch = None
     pass_hidden_state = None
@@ -91,8 +92,9 @@ class Params:
     @classmethod
     def set_params(cls, flags):
         # controller_params
+        cls.base_dir = flags.base_dir
         cls.output_dir = flags.output_dir
-        cls.autoencoder_model_dir = 'autoencoder'
+        cls.autoencoder_model_dir = os.path.join(cls.base_dir, 'autoencoder')
         cls.num_seed_arch = flags.controller_num_seed_arch
         cls.encoder_num_layers = flags.controller_encoder_num_layers
         cls.encoder_hidden_size = flags.controller_encoder_hidden_size
@@ -127,7 +129,6 @@ class Params:
         cls.predict_lambda = flags.controller_predict_lambda
 
         # child_params
-        cls.data_dir = flags.data_path
         cls.sample_policy = flags.child_sample_policy
         cls.child_batch_size = flags.child_batch_size
         cls.eval_batch_size = flags.child_eval_batch_size
@@ -170,6 +171,9 @@ class Params:
                 archs = list(map(utils.build_dag, archs))
                 cls.arch_pool = archs
 
+        cls.dataset = flags.dataset
+        cls.augment = flags.augment
+
 
 def construct_parser():
     global parser
@@ -177,10 +181,10 @@ def construct_parser():
     # Basic model parameters.
     parser.add_argument('--mode', type=str, default='train',
                         choices=['train', 'test'])
-    parser.add_argument('--data_path', type=str, default='data/cifar10')
     parser.add_argument('--eval_dataset', type=str, default='valid',
                         choices=['valid', 'test', 'both'])
     parser.add_argument('--output_dir', type=str, default='models')
+    parser.add_argument('--base_dir', type=str, default='./')
     parser.add_argument('--child_sample_policy', type=str, default='uniform')
     parser.add_argument('--child_batch_size', type=int, default=160)
     parser.add_argument('--child_eval_batch_size', type=int, default=500)
@@ -243,6 +247,8 @@ def construct_parser():
     parser.add_argument('--controller_symmetry', action='store_true', default=True)
     parser.add_argument('--controller_predict_beam_width', type=int, default=0)
     parser.add_argument('--controller_predict_lambda', type=float, default=1)
+    parser.add_argument('--augment', action='store_true', default=False)
+    parser.add_argument('--dataset', type=str, default='CIFAR10')
     return parser
 
 

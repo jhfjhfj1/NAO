@@ -12,7 +12,7 @@ _BATCH_NORM_EPSILON = 1e-5
 
 
 class Predictor:
-    def __init__(self, encoder_outputs, target, mode):
+    def __init__(self, encoder_outputs, target, weights, mode):
         self.encoder_outputs = encoder_outputs
         self.target = target
         self.emb_size = Params.encoder_emb_size
@@ -27,6 +27,7 @@ class Predictor:
         self.time_major = Params.time_major
         self.prediction = None
         self.arch_emb = None
+        self.weights = weights
 
     def build(self):
         x = self.encoder_outputs
@@ -46,6 +47,8 @@ class Predictor:
 
     def compute_loss(self):
         weights = 1 - tf.cast(tf.equal(self.target, -1.0), tf.float32)
+        if self.weights is not None:
+            weights = tf.multiply(self.weights, weights)
         mean_squared_error = tf.losses.mean_squared_error(
             labels=self.target,
             predictions=self.prediction,

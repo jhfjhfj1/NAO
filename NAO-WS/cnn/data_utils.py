@@ -3,22 +3,46 @@ import sys
 import pickle
 import numpy as np
 import tensorflow as tf
+from scipy.ndimage import zoom
 
-from params import Params
+from params import Params, set_params
 
 
-def read_data(data_path=None, num_valids=5000):
+def _int64_feature(value):
+    return tf.train.Feature(int64_list=tf.train.Int64List(value=[value]))
+
+
+def _bytes_feature(value):
+    return tf.train.Feature(bytes_list=tf.train.BytesList(value=[value]))
+
+
+def convert_to_tfrecord(images, labels, output_file):
+    """Converts a file to TFRecords."""
+    with tf.python_io.TFRecordWriter(output_file) as record_writer:
+        num_entries_in_batch = len(labels)
+        for i in range(num_entries_in_batch):
+            example = tf.train.Example(features=tf.train.Features(
+                feature={
+                    'image': _bytes_feature(images[i].tobytes()),
+                    'label': _int64_feature(labels[i])
+                }))
+            record_writer.write(example.SerializeToString())
+
+
+def load_data(num_valids=5000):
     dataset = Params.dataset
-    if dataset == 'CIFAR10':
+    data_path = os.path.join(Params.base_dir, 'data', dataset)
+    if dataset == 'cifar10':
         images, labels = cifar10(data_path)
-    elif dataset == 'SVHN':
+    elif dataset == 'svhn':
         images, labels = svhn(data_path)
-    elif dataset == 'MNIST':
+    elif dataset == 'mnist':
         images, labels = mnist()
-    elif dataset == 'FASHION':
+    elif dataset == 'fashion':
         images, labels = fashion()
-    elif dataset == 'STL':
+    elif dataset == 'stl':
         images, labels = stl(data_path)
+        num_valids = 500
     else:
         images, labels = {}, {}
 
@@ -43,6 +67,17 @@ def read_data(data_path=None, num_valids=5000):
         images["valid"] = (images["valid"] - mean) / std
     images["test"] = (images["test"] - mean) / std
 
+    print(images['train'].shape)
+    print(labels['train'].shape)
+    print(images['valid'].shape)
+    print(labels['valid'].shape)
+    print(images['test'].shape)
+    print(labels['test'].shape)
+    print()
+    save_path = os.path.join(Params.base_dir, 'tf_record_data')
+    convert_to_tfrecord(images['train'], labels['train'], os.path.join(save_path, dataset, 'train.tfrecord'))
+    convert_to_tfrecord(images['valid'], labels['valid'], os.path.join(save_path, dataset, 'valid.tfrecord'))
+    convert_to_tfrecord(images['test'], labels['test'], os.path.join(save_path, dataset, 'test.tfrecord'))
     return images, labels
 
 
@@ -50,10 +85,16 @@ def mnist():
     mnist = tf.keras.datasets.mnist
     images, labels = {}, {}
     (x_train, y_train), (x_test, y_test) = mnist.load_data()
-    images['train'] = x_train
-    images['test'] = x_test
-    labels['train'] = y_train.flatten()
-    labels['test'] = y_test.flatten()
+    x_train = np.pad(x_train, ((0, 0), (2, 2), (2, 2)), 'minimum')
+    x_test = np.pad(x_test, ((0, 0), (2, 2), (2, 2)), 'minimum')
+    x_train = x_train.reshape(x_train.shape + (1,))
+    x_test = x_test.reshape(x_test.shape + (1,))
+    x_train = np.concatenate((x_train, x_train, x_train), axis=-1)
+    x_test = np.concatenate((x_test, x_test, x_test), axis=-1)
+    images['train'] = x_train.astype(np.float32)
+    images['test'] = x_test.astype(np.float32)
+    labels['train'] = y_train.flatten().astype(np.int32)
+    labels['test'] = y_test.flatten().astype(np.int32)
     return images, labels
 
 
@@ -61,11 +102,38 @@ def fashion():
     mnist = tf.keras.datasets.fashion_mnist
     images, labels = {}, {}
     (x_train, y_train), (x_test, y_test) = mnist.load_data()
-    images['train'] = x_train
-    images['test'] = x_test
-    labels['train'] = y_train.flatten()
-    labels['test'] = y_test.flatten()
+    x_train = np.pad(x_train, ((0, 0), (2, 2), (2, 2)), 'minimum')
+    x_test = np.pad(x_test, ((0, 0), (2, 2), (2, 2)), 'minimum')
+    x_train = x_train.reshape(x_train.shape + (1,))
+    x_test = x_test.reshape(x_test.shape + (1,))
+    x_train = np.concatenate((x_train, x_train, x_train), axis=-1)
+    x_test = np.concatenate((x_test, x_test, x_test), axis=-1)
+    images['train'] = x_train.astype(np.float32)
+    images['test'] = x_test.astype(np.float32)
+    labels['train'] = y_train.flatten().astype(np.int32)
+    labels['test'] = y_test.flatten().astype(np.int32)
     return images, labels
+
+
+def resize_image_data(data, resize_shape):
+    """Resize images to given dimension.
+    Args:
+        data: 1-D, 2-D or 3-D images. The Images are expected to have channel last configuration.
+        resize_shape: Image resize dimension.
+    Returns:
+        data: Reshaped data.
+    """
+    if data is None or len(resize_shape) == 0:
+        return data
+
+    if len(data.shape) > 1 and np.array_equal(data[0].shape, resize_shape):
+        return data
+
+    output_data = []
+    for im in data:
+        output_data.append(zoom(input=im, zoom=np.divide(resize_shape, im.shape)))
+
+    return np.array(output_data)
 
 
 def stl(datapath):
@@ -81,11 +149,13 @@ def stl(datapath):
     x_test, y_test = load_data('test.mat')
     x_train = x_train.reshape((len(x_train), 96, 96, 3))
     x_test = x_test.reshape((len(x_test), 96, 96, 3))
+    x_train = resize_image_data(x_train, (32.0, 32.0, 3.0))
+    x_test = resize_image_data(x_test, (32.0, 32.0, 3.0))
     images, labels = {}, {}
-    images['train'] = x_train
-    images['test'] = x_test
-    labels['train'] = y_train.flatten()
-    labels['test'] = y_test.flatten()
+    images['train'] = x_train.astype(np.float32)
+    images['test'] = x_test.astype(np.float32)
+    labels['train'] = y_train.flatten().astype(np.int32)
+    labels['test'] = y_test.flatten().astype(np.int32)
     return images, labels
 
 
@@ -103,10 +173,10 @@ def svhn(datapath):
     x_train, y_train = x_train.transpose((3, 0, 1, 2)), y_train[:, 0]
     x_test, y_test = x_test.transpose((3, 0, 1, 2)), y_test[:, 0]
     images, labels = {}, {}
-    images['train'] = x_train
-    images['test'] = x_test
-    labels['train'] = y_train.flatten()
-    labels['test'] = y_test.flatten()
+    images['train'] = x_train.astype(np.float32)
+    images['test'] = x_test.astype(np.float32)
+    labels['train'] = y_train.flatten().astype(np.int32)
+    labels['test'] = y_test.flatten().astype(np.int32)
     return images, labels
 
 
@@ -124,6 +194,7 @@ def cifar10(data_path):
             full_name = os.path.join(data_path, file_name)
             with open(full_name, 'rb') as finp:
                 data = pickle.load(finp, encoding='bytes')
+                # data = pickle.load(finp)
                 batch_images = data[b"data"].astype(np.float32) / 255.0
                 batch_labels = np.array(data[b"labels"], dtype=np.int32)
                 images.append(batch_images)
@@ -154,3 +225,53 @@ def cifar10(data_path):
     images["test"], labels["test"] = _read_data(data_path, test_file)
 
     return images, labels
+
+
+def parse(serialized_example):
+    """Parses a single tf.Example into image and label tensors."""
+    # Dimensions of the images in the CIFAR-10 dataset.
+    # See http://www.cs.toronto.edu/~kriz/cifar.html for a description of the
+    # input format.
+    features = tf.parse_single_example(
+        serialized_example,
+        features={
+            'image': tf.FixedLenFeature([], tf.string),
+            'label': tf.FixedLenFeature([], tf.int64),
+        })
+    image = tf.decode_raw(features['image'], tf.uint8)
+    image.set_shape([32 * 32 * 3])
+
+    # Reshape from [depth * height * width] to [depth, height, width].
+    image = tf.cast(
+        tf.transpose(tf.reshape(image, [3, 32, 32]), [1, 2, 0]),
+        tf.float32)
+    label = tf.cast(features['label'], tf.int32)
+
+    return image, label
+
+
+def read_data():
+    path = 'tf_record_data/cifar10'
+    file_path = os.path.join(path, 'train.tfrecord')
+    dataset = tf.data.TFRecordDataset(file_path)
+    dataset = dataset.map(parse)
+    print(dataset)
+
+
+def main():
+    set_params()
+    read_data()
+    # Params.dataset = 'cifar10'
+    # load_data()
+    # Params.dataset = 'mnist'
+    # load_data()
+    # Params.dataset = 'fashion'
+    # load_data()
+    # Params.dataset = 'stl'
+    # load_data()
+    # Params.dataset = 'svhn'
+    # load_data()
+
+
+if __name__ == '__main__':
+    main()

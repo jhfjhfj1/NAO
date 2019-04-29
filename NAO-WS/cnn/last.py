@@ -6,7 +6,7 @@ from scipy.special import softmax
 from sklearn.metrics import pairwise_distances
 
 import utils
-from data_utils import read_data
+from data_utils import load_data, convert_to_tfrecord
 from params import Params, set_params
 from controller import encode, predict
 from utils import generate_arch
@@ -116,6 +116,12 @@ def filter_classes(images, labels, classes):
     return np.array(ret_images), np.array(ret_labels)
 
 
+def ensure_dir(directory):
+    """Create directory if it does not exist."""
+    if not os.path.exists(directory):
+        os.makedirs(directory)
+
+
 def slice_dataset_by_class(images, labels, save_path):
     for start in range(10):
         classes = [start, start + 1, start + 2]
@@ -123,17 +129,24 @@ def slice_dataset_by_class(images, labels, save_path):
         images['valid'], labels['valid'] = filter_classes(images['valid'], labels['valid'], classes)
         images['test'], labels['test'] = filter_classes(images['test'], labels['test'], classes)
         path = os.path.join(save_path, '{}_{}_{}'.format(start, start + 1, start + 2))
-        pickle.dump((images, labels), open(path, 'wb'))
+        ensure_dir(path)
+        convert_to_tfrecord(images['train'], labels['train'], os.path.join(path, 'train.tfrecord'))
+        convert_to_tfrecord(images['valid'], labels['valid'], os.path.join(path, 'valid.tfrecord'))
+        convert_to_tfrecord(images['test'], labels['test'], os.path.join(path, 'test.tfrecord'))
+        # pickle.dump((images, labels), open(path, 'wb'))
 
 
 def slice_datasets():
-    images, labels = read_data()
-    slice_dataset_by_class(images, labels, 'data/sliced_mnist')
-    images, labels = read_data('data/cifar10')
-    slice_dataset_by_class(images, labels, 'data/sliced_cifar10')
+    Params.dataset = 'mnist'
+    images, labels = load_data()
+    slice_dataset_by_class(images, labels, 'tf_record_data/sliced_mnist')
+    Params.dataset = 'cifar10'
+    images, labels = load_data()
+    slice_dataset_by_class(images, labels, 'tf_record_data/sliced_cifar10')
 
 
 def main():
+    set_params()
     # n = 10
     # p = 20
     # k = 30
@@ -143,21 +156,19 @@ def main():
     # arch_similarity_matrix = np.matmul(arch_embeds, np.transpose(arch_embeds))
     # print(maximum_likelihood_estimation(samples, arch_similarity_matrix).shape)
 
-    # slice_datasets()
+    slice_datasets()
 
-    # set_params()
     # synthesize_history()
 
-    set_params()
-    old_archs = utils.generate_arch(Params.num_seed_arch, Params.num_cells, 5)
-    branch_length = Params.source_length // 2 // 5 // 2
-    encoder_input = list(map(lambda x:
-                             utils.parse_arch_to_seq(x[0], branch_length) + utils.parse_arch_to_seq(x[1],
-                                                                                                    branch_length),
-                             old_archs))
-    predictor_target = np.random.rand(len(encoder_input))
-    history = augment(encoder_input, predictor_target)
-    print(history)
+    # old_archs = utils.generate_arch(Params.num_seed_arch, Params.num_cells, 5)
+    # branch_length = Params.source_length // 2 // 5 // 2
+    # encoder_input = list(map(lambda x:
+    #                          utils.parse_arch_to_seq(x[0], branch_length) + utils.parse_arch_to_seq(x[1],
+    #                                                                                                 branch_length),
+    #                          old_archs))
+    # predictor_target = np.random.rand(len(encoder_input))
+    # history = augment(encoder_input, predictor_target)
+    # print(history)
 
 
 if __name__ == '__main__':

@@ -6,10 +6,10 @@ import os
 import sys
 import time
 import numpy as np
-from data_utils import read_data
 import tensorflow as tf
 from tensorflow.python.training import moving_averages
 
+from data_utils import read_data
 from params import Params
 from utils import count_model_params, get_train_ops
 
@@ -1137,7 +1137,7 @@ def get_child_model(images, labels):
 def train():
     g = tf.Graph()
     with g.as_default():
-        images, labels = read_data(Params.data_dir)
+        images, labels = read_data()
         child_ops = get_ops(images, labels)
         saver = tf.train.Saver(max_to_keep=100)
         checkpoint_saver_hook = tf.train.CheckpointSaverHook(
@@ -1218,7 +1218,7 @@ def valid():
     # defining a new computational graph
     g = tf.Graph()
     with g.as_default():
-        images, labels = read_data(Params.data_dir)
+        images, labels = read_data()
         child_ops = get_valid_ops(images, labels)
         tf.logging.info("-" * 80)
         tf.logging.info("Starting session")
