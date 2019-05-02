@@ -3,7 +3,7 @@ import argparse
 import os
 import tensorflow as tf
 
-import utils
+from .utils import build_dag
 
 
 class Params:
@@ -162,13 +162,13 @@ class Params:
         if flags.child_arch_pool is not None:
             with open(flags.child_arch_pool) as f:
                 archs = f.read().splitlines()
-                archs = list(map(utils.build_dag, archs))
+                archs = list(map(build_dag, archs))
                 cls.arch_pool = archs
         if os.path.exists(os.path.join(cls.get_child_model_dir(), 'arch_pool')):
             tf.logging.info('Found arch_pool in child model dir, loading')
             with open(os.path.join(cls.get_child_model_dir(), 'arch_pool')) as f:
                 archs = f.read().splitlines()
-                archs = list(map(utils.build_dag, archs))
+                archs = list(map(build_dag, archs))
                 cls.arch_pool = archs
 
         cls.dataset = flags.dataset
@@ -214,7 +214,7 @@ def construct_parser():
     parser.add_argument('--child_lr_cosine', action='store_true', default=True)
     parser.add_argument('--child_eval_every_epochs', type=str, default='30')
     parser.add_argument('--child_arch_pool', type=str, default=None)
-    parser.add_argument('--child_data_format', type=str, default="NCHW", choices=['NHWC', 'NCHW'])
+    parser.add_argument('--child_data_format', type=str, default="NHWC", choices=['NHWC', 'NCHW'])
     parser.add_argument('--controller_num_seed_arch', type=int, default=20)
     parser.add_argument('--controller_encoder_num_layers', type=int, default=1)
     parser.add_argument('--controller_encoder_hidden_size', type=int, default=96)
@@ -248,7 +248,7 @@ def construct_parser():
     parser.add_argument('--controller_predict_beam_width', type=int, default=0)
     parser.add_argument('--controller_predict_lambda', type=float, default=1)
     parser.add_argument('--augment', action='store_true', default=False)
-    parser.add_argument('--dataset', type=str, default='CIFAR10')
+    parser.add_argument('--dataset', type=str, default='cifar10')
     return parser
 
 

@@ -3,9 +3,6 @@ from __future__ import division
 from __future__ import print_function
 
 import os
-import json
-
-import argparse
 import math
 import sys
 
@@ -13,10 +10,10 @@ import numpy as np
 import tensorflow as tf
 import time
 
-import encoder
-import decoder
-import utils
-from params import Params, set_params
+from .decoder import DecoderModel
+from .encoder import Encoder, Predictor
+from .params import Params, set_params
+from .utils import generate_arch, parse_arch_to_seq
 
 SOS = 0
 EOS = 0
@@ -35,7 +32,7 @@ def encode(original_encoder_input):
         encoder_input = iterator.get_next()
 
         with tf.variable_scope('EPD', reuse=tf.AUTO_REUSE):
-            my_encoder = encoder.Encoder(encoder_input, tf.estimator.ModeKeys.PREDICT, 'Encoder', tf.AUTO_REUSE)
+            my_encoder = Encoder(encoder_input, tf.estimator.ModeKeys.PREDICT, 'Encoder', tf.AUTO_REUSE)
             embed = my_encoder.predict()
 
         tf.logging.info('Starting Session')
@@ -78,8 +75,8 @@ def decode(decoder_inputs, new_arch_outputs):
         tf.get_variable_scope().reuse_variables()
 
         with tf.variable_scope('EPD', reuse=tf.AUTO_REUSE):
-            my_decoder = decoder.Model(new_arch_outputs, encoder_state, decoder_inputs, None,
-                                       tf.estimator.ModeKeys.PREDICT, 'Decoder')
+            my_decoder = DecoderModel(new_arch_outputs, encoder_state, decoder_inputs, None,
+                                      tf.estimator.ModeKeys.PREDICT, 'Decoder')
             new_sample_id = my_decoder.decode()
 
         tf.logging.info('Starting Session')
@@ -96,7 +93,7 @@ def get_train_ops(encoder_outputs, predictor_train_target,
                   weights,
                   reuse=tf.AUTO_REUSE):
     with tf.variable_scope('EPD', reuse=reuse):
-        predictor = encoder.Predictor(encoder_outputs, predictor_train_target, weights, tf.estimator.ModeKeys.TRAIN)
+        predictor = Predictor(encoder_outputs, predictor_train_target, weights, tf.estimator.ModeKeys.TRAIN)
         predictor.build()
         predictor.compute_loss()
 
@@ -145,10 +142,10 @@ def get_generate_ops(encoder_outputs, reuse=tf.AUTO_REUSE):
         dataset = dataset.batch(Params.controller_batch_size)
         iterator = dataset.make_one_shot_iterator()
         encoder_outputs, decoder_inputs = iterator.get_next()
-        predictor = encoder.Predictor(encoder_outputs,
-                                      None,
-                                      None,
-                                      tf.estimator.ModeKeys.PREDICT)
+        predictor = Predictor(encoder_outputs,
+                              None,
+                              None,
+                              tf.estimator.ModeKeys.PREDICT)
         predictor.build()
         predict_value, _, new_arch_outputs = predictor.infer()
         return predict_value, new_arch_outputs, decoder_inputs
@@ -162,10 +159,10 @@ def get_predict_ops(encoder_outputs, reuse=tf.AUTO_REUSE):
         dataset = dataset.batch(batch_size)
         iterator = dataset.make_one_shot_iterator()
         encoder_outputs = iterator.get_next()
-        predictor = encoder.Predictor(encoder_outputs,
-                                      None,
-                                      None,
-                                      tf.estimator.ModeKeys.PREDICT)
+        predictor = Predictor(encoder_outputs,
+                              None,
+                              None,
+                              tf.estimator.ModeKeys.PREDICT)
         predictor.build()
         return predictor.prediction
 
@@ -295,11 +292,11 @@ def main(unused_argv):
     # all_params = vars(Params)
     # with open(os.path.join(Params.output_dir, 'hparams.json'), 'w') as f:
     #     json.dump(all_params.__dict__, f)
-    arch_pool = utils.generate_arch(num, 5, 5)
+    arch_pool = generate_arch(num, 5, 5)
     predictor_target = np.array([0.5] * num).reshape(num)
     branch_length = 40 // 2 // 5 // 2
     encoder_input = list(
-        map(lambda x: utils.parse_arch_to_seq(x[0], branch_length) + utils.parse_arch_to_seq(x[1], branch_length),
+        map(lambda x: parse_arch_to_seq(x[0], branch_length) + parse_arch_to_seq(x[1], branch_length),
             arch_pool))
     Params.batches_per_epoch = math.ceil(len(encoder_input) / Params.controller_batch_size)
     train(encoder_input, predictor_target)

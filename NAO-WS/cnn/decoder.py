@@ -6,7 +6,7 @@ import tensorflow as tf
 from tensorflow.python.framework import ops
 from tensorflow.contrib.seq2seq.python.ops.basic_decoder import BasicDecoderOutput
 
-from params import Params
+from .params import Params
 
 INF = 1 << 16
 
@@ -339,7 +339,7 @@ class Decoder():
         return attention_mechanism
 
 
-class Model(object):
+class DecoderModel(object):
     def __init__(self,
                  encoder_outputs,
                  encoder_state,

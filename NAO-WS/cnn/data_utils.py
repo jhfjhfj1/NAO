@@ -5,7 +5,7 @@ import numpy as np
 import tensorflow as tf
 from scipy.ndimage import zoom
 
-from params import Params, set_params
+from .params import Params, set_params
 
 
 def _int64_feature(value):
@@ -227,7 +227,7 @@ def cifar10(data_path):
     return images, labels
 
 
-def parse(serialized_example):
+def _parse(serialized_example):
     """Parses a single tf.Example into image and label tensors."""
     # Dimensions of the images in the CIFAR-10 dataset.
     # See http://www.cs.toronto.edu/~kriz/cifar.html for a description of the
@@ -238,24 +238,54 @@ def parse(serialized_example):
             'image': tf.FixedLenFeature([], tf.string),
             'label': tf.FixedLenFeature([], tf.int64),
         })
-    image = tf.decode_raw(features['image'], tf.uint8)
-    image.set_shape([32 * 32 * 3])
+    image = tf.decode_raw(features['image'], tf.float32)
+    image.set_shape([3 * 32 * 32])
 
     # Reshape from [depth * height * width] to [depth, height, width].
-    image = tf.cast(
-        tf.transpose(tf.reshape(image, [3, 32, 32]), [1, 2, 0]),
-        tf.float32)
+    image = tf.reshape(image, [32, 32, 3])
+    image = tf.cast(image, tf.float32)
     label = tf.cast(features['label'], tf.int32)
+
+    image = tf.transpose(image, [2, 0, 1])
 
     return image, label
 
 
+def create_weight(name, shape, initializer=None, trainable=True, seed=None):
+    if initializer is None:
+        initializer = tf.contrib.keras.initializers.he_normal(seed=seed)
+    return tf.get_variable(name, shape, initializer=initializer, trainable=trainable)
+
+
+def global_avg_pool(x, data_format="NHWC"):
+    if data_format == "NHWC":
+        x = tf.reduce_mean(x, [1, 2])
+    elif data_format == "NCHW":
+        x = tf.reduce_mean(x, [2, 3])
+    else:
+        raise NotImplementedError("Unknown data_format {}".format(data_format))
+    return x
+
+
 def read_data():
-    path = 'tf_record_data/cifar10'
-    file_path = os.path.join(path, 'train.tfrecord')
-    dataset = tf.data.TFRecordDataset(file_path)
-    dataset = dataset.map(parse)
-    print(dataset)
+    path = os.path.join(Params.base_dir, 'tf_record_data', Params.dataset)
+    train_data = tf.data.TFRecordDataset(os.path.join(path, 'train.tfrecord')).repeat().map(_parse)
+    x_train, y_train = train_data.shuffle(buffer_size=45000) \
+        .batch(160, drop_remainder=True).make_one_shot_iterator().get_next()
+    w = create_weight("w", [3, 3, 3, 24 * 3])
+    x = tf.nn.conv2d(
+        x_train, w, [1, 1, 1, 1], "SAME", data_format="NCHW")
+    x = global_avg_pool(x, data_format="NCHW")
+    w = create_weight("w1", [24 * 3, 10])
+    logits = tf.matmul(x, w)
+    train_preds = tf.argmax(logits, axis=1)
+    train_preds = tf.to_int32(train_preds)
+    train_acc = tf.equal(train_preds, y_train)
+    train_acc = tf.to_int32(train_acc)
+    train_acc = tf.reduce_sum(train_acc)
+    with tf.train.SingularMonitoredSession() as sess:
+        a = sess.run([train_acc])
+        print(a)
 
 
 def main():

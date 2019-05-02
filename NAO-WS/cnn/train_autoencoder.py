@@ -92,8 +92,8 @@ def get_train_ops(encoder_train_input, decoder_train_input, decoder_train_target
         encoder_state.set_shape([None, Params.decoder_hidden_size])
         encoder_state = tf.contrib.rnn.LSTMStateTuple(encoder_state, encoder_state)
         encoder_state = (encoder_state,) * Params.decoder_num_layers
-        my_decoder = decoder.Model(encoder_outputs, encoder_state, decoder_train_input, decoder_train_target,
-                                   tf.estimator.ModeKeys.TRAIN, 'Decoder', reuse)
+        my_decoder = decoder.DecoderModel(encoder_outputs, encoder_state, decoder_train_input, decoder_train_target,
+                                          tf.estimator.ModeKeys.TRAIN, 'Decoder', reuse)
         decoder_loss = my_decoder.loss
         cross_entropy = decoder_loss
 

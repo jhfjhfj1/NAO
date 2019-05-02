@@ -2,10 +2,9 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-import random
 import tensorflow as tf
 
-from params import Params
+from .params import Params
 
 _BATCH_NORM_DECAY = 0.9
 _BATCH_NORM_EPSILON = 1e-5

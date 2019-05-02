@@ -9,9 +9,8 @@ import numpy as np
 import tensorflow as tf
 from tensorflow.python.training import moving_averages
 
-from data_utils import read_data
-from params import Params
-from utils import count_model_params, get_train_ops
+from .params import Params
+from .utils import count_model_params, get_train_ops
 
 
 def sample_arch_from_pool(arch_pool, prob=None):
@@ -174,8 +173,6 @@ def relu(x, leaky=0.0):
 class Model(object):
 
     def __init__(self,
-                 images,
-                 labels,
                  use_aux_heads=False,
                  cutout_size=None,
                  fixed_arc=None,
@@ -240,83 +237,28 @@ class Model(object):
         tf.logging.info("Build data ops")
         with tf.device("/cpu:0"):
             # training data
-            self.num_train_examples = np.shape(images["train"])[0]
-            self.num_train_batches = (
-                                             self.num_train_examples + self.batch_size - 1) // self.batch_size
-            x_train, y_train = tf.train.shuffle_batch(
-                [images["train"], labels["train"]],
-                batch_size=self.batch_size,
-                capacity=50000,
-                enqueue_many=True,
-                min_after_dequeue=0,
-                num_threads=16,
-                seed=self.seed,
-                allow_smaller_final_batch=True,
-            )
+            path = os.path.join(Params.base_dir, 'tf_record_data', Params.dataset)
+            self.training = True
+            train_data = tf.data.TFRecordDataset(os.path.join(path, 'train.tfrecord')).repeat().map(self._parse)
+            self.training = False
+            valid_data = tf.data.TFRecordDataset(os.path.join(path, 'valid.tfrecord')).repeat().map(self._parse)
+            test_data = tf.data.TFRecordDataset(os.path.join(path, 'test.tfrecord')).repeat().map(self._parse)
+
+            self.num_train_examples = self.get_n_train()
+            self.num_train_batches = (self.num_train_examples + self.batch_size - 1) // self.batch_size
             self.lr_dec_every = lr_dec_every * self.num_train_batches
+            self.x_train, self.y_train = train_data.shuffle(buffer_size=self.num_train_examples, seed=self.seed) \
+                .batch(self.batch_size, drop_remainder=True).make_one_shot_iterator().get_next()
 
-            # Prerprocess the image data
-            def _pre_process(x):
-                x = tf.pad(x, [[4, 4], [4, 4], [0, 0]])
-                x = tf.random_crop(x, [32, 32, 3], seed=self.seed)
-                x = tf.image.random_flip_left_right(x, seed=self.seed)
-                if self.cutout_size is not None:
-                    mask = tf.ones([self.cutout_size, self.cutout_size], dtype=tf.int32)
-                    start = tf.random_uniform([2], minval=0, maxval=32, dtype=tf.int32)
-                    mask = tf.pad(mask, [[self.cutout_size + start[0], 32 - start[0]],
-                                         [self.cutout_size + start[1], 32 - start[1]]])
-                    mask = mask[self.cutout_size: self.cutout_size + 32,
-                           self.cutout_size: self.cutout_size + 32]
-                    mask = tf.reshape(mask, [32, 32, 1])
-                    mask = tf.tile(mask, [1, 1, 3])
-                    x = tf.where(tf.equal(mask, 0), x=x, y=tf.zeros_like(x))
-                if self.data_format == "NCHW":
-                    x = tf.transpose(x, [2, 0, 1])
+            self.num_valid_examples = self.get_n_valid()
+            self.num_valid_batches = (self.num_valid_examples + self.eval_batch_size - 1) // self.eval_batch_size
+            self.x_valid, self.y_valid = valid_data.shuffle(buffer_size=self.num_valid_examples, seed=self.seed) \
+                .batch(self.batch_size).make_one_shot_iterator().get_next()
 
-                return x
-
-            self.x_train = tf.map_fn(_pre_process, x_train, back_prop=False)
-            self.y_train = y_train
-
-            # valid data
-            self.x_valid, self.y_valid = None, None
-            if images["valid"] is not None:
-                images["valid_original"] = np.copy(images["valid"])
-                labels["valid_original"] = np.copy(labels["valid"])
-                if self.data_format == "NCHW":
-                    images["valid"] = tf.transpose(images["valid"], [0, 3, 1, 2])
-                self.num_valid_examples = np.shape(images["valid"])[0]
-                self.num_valid_batches = (
-                        (self.num_valid_examples + self.eval_batch_size - 1)
-                        // self.eval_batch_size)
-                self.x_valid, self.y_valid = tf.train.batch(
-                    [images["valid"], labels["valid"]],
-                    batch_size=self.eval_batch_size,
-                    capacity=5000,
-                    enqueue_many=True,
-                    num_threads=1,
-                    allow_smaller_final_batch=True,
-                )
-
-            # test data
-            if self.data_format == "NCHW":
-                images["test"] = tf.transpose(images["test"], [0, 3, 1, 2])
-            self.num_test_examples = np.shape(images["test"])[0]
-            self.num_test_batches = (
-                    (self.num_test_examples + self.eval_batch_size - 1)
-                    // self.eval_batch_size)
-            self.x_test, self.y_test = tf.train.batch(
-                [images["test"], labels["test"]],
-                batch_size=self.eval_batch_size,
-                capacity=10000,
-                enqueue_many=True,
-                num_threads=1,
-                allow_smaller_final_batch=True,
-            )
-
-        # cache images and labels
-        self.images = images
-        self.labels = labels
+            self.num_test_examples = self.get_n_test()
+            self.num_test_batches = (self.num_test_examples + self.eval_batch_size - 1) // self.eval_batch_size
+            self.x_test, self.y_test = test_data.shuffle(buffer_size=self.num_test_examples, seed=self.seed) \
+                .batch(self.batch_size).make_one_shot_iterator().get_next()
 
         if self.data_format == "NHWC":
             self.actual_data_format = "channels_last"
@@ -352,6 +294,75 @@ class Model(object):
 
         if self.use_aux_heads:
             self.aux_head_indices = [self.pool_layers[-1] + 1]
+
+    def get_n_train(self):
+        if Params.dataset == 'cifar10':
+            return 45000
+        elif Params.dataset in ['mnist', 'fashion']:
+            return 55000
+        elif Params.dataset == 'stl':
+            return 4500
+        else:
+            return 68257
+
+    def get_n_valid(self):
+        if Params.dataset == 'stl':
+            return 500
+        else:
+            return 5000
+
+    def get_n_test(self):
+        if Params.dataset in ['mnist', 'fashion', 'cifar10']:
+            return 10000
+        elif Params.dataset == 'stl':
+            return 8000
+        else:
+            return 26032
+
+    def _parse(self, serialized_example):
+        """Parses a single tf.Example into image and label tensors."""
+        # Dimensions of the images in the CIFAR-10 dataset.
+        # See http://www.cs.toronto.edu/~kriz/cifar.html for a description of the
+        # input format.
+        features = tf.parse_single_example(
+            serialized_example,
+            features={
+                'image': tf.FixedLenFeature([], tf.string),
+                'label': tf.FixedLenFeature([], tf.int64),
+            })
+        image = tf.decode_raw(features['image'], tf.float32)
+        image.set_shape([3 * 32 * 32])
+
+        # Reshape from [depth * height * width] to [depth, height, width].
+        image = tf.reshape(image, [32, 32, 3])
+        image = tf.cast(image, tf.float32)
+        label = tf.cast(features['label'], tf.int32)
+
+        # Custom preprocessing.
+        if self.training:
+            image = self._pre_process(image)
+
+        if self.data_format == "NCHW":
+            image = tf.transpose(image, [2, 0, 1])
+
+        return image, label
+
+    def _pre_process(self, x):
+        x = tf.pad(x, [[4, 4], [4, 4], [0, 0]])
+        x = tf.random_crop(x, [32, 32, 3], seed=self.seed)
+        x = tf.image.random_flip_left_right(x, seed=self.seed)
+        if self.cutout_size is not None:
+            mask = tf.ones([self.cutout_size, self.cutout_size], dtype=tf.int32)
+            start = tf.random_uniform([2], minval=0, maxval=32, dtype=tf.int32)
+            mask = tf.pad(mask, [[self.cutout_size + start[0], 32 - start[0]],
+                                 [self.cutout_size + start[1], 32 - start[1]]])
+            mask = mask[self.cutout_size: self.cutout_size + 32,
+                        self.cutout_size: self.cutout_size + 32]
+            mask = tf.reshape(mask, [32, 32, 1])
+            mask = tf.tile(mask, [1, 1, 3])
+            x = tf.where(tf.equal(mask, 0), x=x, y=tf.zeros_like(x))
+
+        return x
 
     def eval_once(self, sess, eval_set, feed_dict=None, verbose=False):
         """Expects self.acc and self.global_step to be defined.
@@ -449,7 +460,7 @@ class Model(object):
       x: tensor of shape [N, H, W, C] or [N, C, H, W]
     """
         if self.data_format == "NHWC":
-            return x.get_shape()[3].value
+            return x.get_shape()[-1].value
         elif self.data_format == "NCHW":
             return x.get_shape()[1].value
         else:
@@ -620,6 +631,21 @@ class Model(object):
                 inp_c = self._get_C(x)
                 w = create_weight("w", [inp_c, 10])
                 x = tf.matmul(x, w)
+
+        # with tf.variable_scope(self.name):
+        #     w = create_weight("w3", [3, 3, 3, 24 * 3])
+        #     x = tf.nn.conv2d(
+        #         images, w, [1, 1, 1, 1], "SAME", data_format="NCHW")
+        #     x = global_avg_pool(x, data_format="NCHW")
+        # with tf.variable_scope("fc"):
+        #     w = create_weight("w1", [24 * 3, 10])
+        #     x = tf.matmul(x, w)
+        #     self.aux_logits = x
+        #     aux_head_variables = [
+        #         var for var in tf.trainable_variables() if (
+        #                 var.name.startswith(self.name) and "aux_head" in var.name)]
+        #     self.num_aux_vars = count_model_params(aux_head_variables)
+        # print(tf.trainable_variables())
         return x
 
     def _fixed_conv(self, x, f_size, out_filters, stride, is_training,
@@ -1077,8 +1103,8 @@ class Model(object):
         self._build_test()
 
 
-def get_ops(images, labels):
-    child_model = get_child_model(images, labels)
+def get_ops():
+    child_model = get_child_model()
     if Params.fixed_arc is None:
         child_model.connect_controller(Params.arch_pool, Params.arch_pool_prob)
     else:
@@ -1098,10 +1124,8 @@ def get_ops(images, labels):
     return ops
 
 
-def get_child_model(images, labels):
+def get_child_model():
     child_model = Model(
-        images,
-        labels,
         use_aux_heads=Params.use_aux_heads,
         cutout_size=Params.cutout_size,
         num_layers=Params.num_layers,
@@ -1137,8 +1161,7 @@ def get_child_model(images, labels):
 def train():
     g = tf.Graph()
     with g.as_default():
-        images, labels = read_data()
-        child_ops = get_ops(images, labels)
+        child_ops = get_ops()
         saver = tf.train.Saver(max_to_keep=100)
         checkpoint_saver_hook = tf.train.CheckpointSaverHook(
             Params.get_child_model_dir(), save_steps=child_ops["num_train_batches"], saver=saver)
@@ -1186,8 +1209,8 @@ def train():
                     return epoch
 
 
-def get_valid_ops(images, labels):
-    child_model = get_child_model(images, labels)
+def get_valid_ops():
+    child_model = get_child_model()
     if Params.fixed_arc is None:
         # The arch_pool is a list of cell pairs, each cell is a list of mixed nodes and operations, every 4 elements
         # is one node.
@@ -1218,8 +1241,7 @@ def valid():
     # defining a new computational graph
     g = tf.Graph()
     with g.as_default():
-        images, labels = read_data()
-        child_ops = get_valid_ops(images, labels)
+        child_ops = get_valid_ops()
         tf.logging.info("-" * 80)
         tf.logging.info("Starting session")
         config = tf.ConfigProto(allow_soft_placement=True)
