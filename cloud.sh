@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-JOB_NAME=testnao3
+JOB_NAME=testnao6
 BUCKET_NAME=haifeng-tf-example
 OUTPUT_PATH=gs://$BUCKET_NAME/$JOB_NAME
 REGION=us-central1
 gcloud ai-platform jobs submit training $JOB_NAME\
     --job-dir $OUTPUT_PATH \
+    --python-version 3.5 \
     --runtime-version 1.13 \
     --module-name cnn.train_search \
     --package-path NAO-WS/cnn/ \

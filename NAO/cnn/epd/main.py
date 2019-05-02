@@ -212,7 +212,7 @@ def model_fn(features, labels, mode, params):
     encoder_state.set_shape([None, params['decoder_hidden_size']])
     encoder_state = tf.contrib.rnn.LSTMStateTuple(encoder_state, encoder_state)
     encoder_state = (encoder_state,) * params['decoder_num_layers']
-    my_decoder = decoder.Model(encoder_outputs, encoder_state, decoder_input, decoder_target, params, mode, 'Decoder')
+    my_decoder = decoder.DecoderModel(encoder_outputs, encoder_state, decoder_input, decoder_target, params, mode, 'Decoder')
     encoder_loss = my_encoder.loss
     decoder_loss = my_decoder.loss
    
@@ -287,7 +287,7 @@ def model_fn(features, labels, mode, params):
     encoder_state.set_shape([None, params['decoder_hidden_size']])
     encoder_state = tf.contrib.rnn.LSTMStateTuple(encoder_state, encoder_state)
     encoder_state = (encoder_state,) * params['decoder_num_layers']
-    my_decoder = decoder.Model(encoder_outputs, encoder_state, decoder_input, decoder_target, params, mode, 'Decoder')
+    my_decoder = decoder.DecoderModel(encoder_outputs, encoder_state, decoder_input, decoder_target, params, mode, 'Decoder')
     encoder_loss = my_encoder.loss
     decoder_loss = my_decoder.loss
     total_loss = params['trade_off'] * encoder_loss + (1-params['trade_off']) * decoder_loss + params['weight_decay'] * tf.add_n(
@@ -308,7 +308,7 @@ def model_fn(features, labels, mode, params):
     encoder_state.set_shape([None, params['decoder_hidden_size']])
     encoder_state = tf.contrib.rnn.LSTMStateTuple(encoder_state, encoder_state)
     encoder_state = (encoder_state,) * params['decoder_num_layers']
-    my_decoder = decoder.Model(encoder_outputs, encoder_state, decoder_input, decoder_target, params, mode, 'Decoder')
+    my_decoder = decoder.DecoderModel(encoder_outputs, encoder_state, decoder_input, decoder_target, params, mode, 'Decoder')
     res = my_encoder.infer()
     predict_value = res['predict_value']
     arch_emb = res['arch_emb']
@@ -322,7 +322,7 @@ def model_fn(features, labels, mode, params):
     encoder_state = tf.contrib.rnn.LSTMStateTuple(encoder_state, encoder_state)
     encoder_state = (encoder_state,) * params['decoder_num_layers']
     tf.get_variable_scope().reuse_variables()
-    my_decoder = decoder.Model(new_arch_outputs, encoder_state, decoder_input, decoder_target, params, mode, 'Decoder')
+    my_decoder = decoder.DecoderModel(new_arch_outputs, encoder_state, decoder_input, decoder_target, params, mode, 'Decoder')
     res = my_decoder.decode()
     new_sample_id = res['sample_id']
     #_log_variable_sizes(tf.trainable_variables(), "Trainable Variables")
