@@ -5,10 +5,10 @@ import os
 from scipy.special import softmax
 from sklearn.metrics import pairwise_distances
 
-from .data_utils import load_data, convert_to_tfrecord
-from .params import Params, set_params
-from .controller import encode, predict
-from .utils import generate_arch, parse_arch_to_seq
+from data_utils import load_data, convert_to_tfrecord
+from params import Params, set_params
+from controller import encode, predict
+from utils import generate_arch, parse_arch_to_seq
 
 
 def maximum_likelihood_estimation(samples, arch_similarity_matrix):

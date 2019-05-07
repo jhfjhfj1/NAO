@@ -5,7 +5,7 @@ import numpy as np
 import tensorflow as tf
 from scipy.ndimage import zoom
 
-from .params import Params, set_params
+from params import Params, set_params
 
 
 def _int64_feature(value):

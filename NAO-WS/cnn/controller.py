@@ -10,10 +10,10 @@ import numpy as np
 import tensorflow as tf
 import time
 
-from .decoder import DecoderModel
-from .encoder import Encoder, Predictor
-from .params import Params, set_params
-from .utils import generate_arch, parse_arch_to_seq
+from decoder import DecoderModel
+from encoder import Encoder, Predictor
+from params import Params, set_params
+from utils import generate_arch, parse_arch_to_seq
 
 SOS = 0
 EOS = 0
@@ -306,6 +306,14 @@ def main(unused_argv):
     result = predict(encoder_input)
     result = np.array(result)
     print(result.shape)
+    new_arch = generate(encoder_input)
+    new_archs = []
+    new_arch_lower_bound = int(Params.num_seed_arch / 2)
+    for arch in new_arch:
+        if arch not in encoder_input and arch not in new_archs:
+            new_archs.append(arch)
+        if len(new_archs) >= new_arch_lower_bound:
+            break
 
 
 if __name__ == '__main__':

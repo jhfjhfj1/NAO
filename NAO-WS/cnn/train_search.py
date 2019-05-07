@@ -7,13 +7,14 @@ import numpy as np
 import tensorflow as tf
 import math
 
-from .controller import predict, train
-from .params import set_params, Params
-from .last import augment
-from .model_search import train as child_train
-from .model_search import valid as child_valid
-from .calculate_params import calculate_params
-from .utils import generate_arch, parse_arch_to_seq, parse_seq_to_arch
+from tfrecord import save_array
+from controller import predict, train, generate
+from params import set_params, Params
+from last import augment
+from model_search import train as child_train
+from model_search import valid as child_valid
+from calculate_params import calculate_params
+from utils import generate_arch, parse_arch_to_seq, parse_seq_to_arch
 
 
 def _log_variable_sizes(var_list, tag):
@@ -45,7 +46,7 @@ def search_train():
         # Train child model
         if Params.arch_pool is None:
             arch_pool = generate_arch(Params.num_seed_arch, Params.num_cells,
-                                            5)  # [[[conv],[reduc]]]
+                                      5)  # [[[conv],[reduc]]]
             Params.arch_pool = arch_pool
             Params.arch_pool_prob = None
         else:
@@ -97,11 +98,9 @@ def search_train():
                             fp.write('{}\n'.format(perf))
                             fp_latest.write('{}\n'.format(perf))
 
-        print(child_epoch)
-        import pickle
-        pickle.dump((old_archs, old_archs_perf), open(os.path.join(child_model_dir,
-                                                                   'history.{}'.format(child_epoch)),
-                                                      'wb'))
+        save_array(old_archs, os.path.join(child_model_dir, 'history_arch_{}'.format(child_epoch)))
+        save_array(old_archs_perf, os.path.join(child_model_dir, 'history_perf_{}'.format(child_epoch)))
+
         if child_epoch >= Params.num_epochs:
             break
 
@@ -133,7 +132,7 @@ def search_train():
         new_arch_lower_bound = int(Params.num_seed_arch / 2)
         while len(new_archs) < new_arch_lower_bound:
             Params.predict_lambda += 1
-            new_arch = predict(top100_archs)
+            new_arch = generate(top100_archs)
             for arch in new_arch:
                 if arch not in encoder_input and arch not in new_archs:
                     new_archs.append(arch)
@@ -147,7 +146,9 @@ def search_train():
         num_new_archs = len(new_archs)
         tf.logging.info("Generate {} new archs".format(num_new_archs))
         # The pool size is always the same as the original seeds : 1000. Every time just replace the last ones.
-        new_arch_pool = old_archs[:len(old_archs) - (num_new_archs + int(new_arch_lower_bound / 10))] + new_archs + generate_arch(int(new_arch_lower_bound / 10), 5, 5)
+        new_arch_pool = old_archs[
+                        :len(old_archs) - (num_new_archs + int(new_arch_lower_bound / 10))] + new_archs + generate_arch(
+            int(new_arch_lower_bound / 10), 5, 5)
         tf.logging.info("Totally {} archs now to train".format(len(new_arch_pool)))
         Params.arch_pool = new_arch_pool
         with open(os.path.join(child_model_dir, 'arch_pool'), 'w') as f:
@@ -172,10 +173,6 @@ if __name__ == '__main__':
     # os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"  # see issue #152
     # os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
-    if tf.test.gpu_device_name():
-        print('Default GPU Device: {}'.format(tf.test.gpu_device_name()))
-    else:
-        print("Please install GPU version of TF")
     tf.logging.set_verbosity(tf.logging.INFO)
     unparsed = set_params()
     tf.app.run(argv=[sys.argv[0]] + unparsed)

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-JOB_NAME=testnao6
+JOB_NAME=testnao10
 BUCKET_NAME=haifeng-tf-example
 OUTPUT_PATH=gs://$BUCKET_NAME/$JOB_NAME
-REGION=us-central1
+REGION=us-west1
 gcloud ai-platform jobs submit training $JOB_NAME\
     --job-dir $OUTPUT_PATH \
     --python-version 3.5 \

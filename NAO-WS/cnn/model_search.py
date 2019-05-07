@@ -9,8 +9,8 @@ import numpy as np
 import tensorflow as tf
 from tensorflow.python.training import moving_averages
 
-from .params import Params
-from .utils import count_model_params, get_train_ops
+from params import Params
+from utils import count_model_params, get_train_ops
 
 
 def sample_arch_from_pool(arch_pool, prob=None):

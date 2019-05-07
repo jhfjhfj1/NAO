@@ -3,7 +3,7 @@ import argparse
 import os
 import tensorflow as tf
 
-from .utils import build_dag
+from utils import build_dag
 
 
 class Params:
